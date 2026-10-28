@@ -13,7 +13,13 @@ import {
   StaffUser,
 } from '../../src/types/mais.ts';
 
-const DATA_DIR = process.env.NODE_ENV === 'test'
+const isTestEnv =
+  process.env.NODE_ENV === 'test' ||
+  process.env.npm_lifecycle_event?.startsWith('test') ||
+  process.argv.some((arg) => arg.includes('test')) ||
+  process.execArgv.some((arg) => arg.includes('test'));
+
+const DATA_DIR = isTestEnv
   ? path.join(os.tmpdir(), `mais_test_${process.pid}`)
   : process.env.VERCEL
   ? path.join('/tmp', 'data')
@@ -111,6 +117,12 @@ export function loadDatabase(): MaisDatabaseState {
     console.error('Error loading persisted MAIS DB, initializing clean database:', err);
   }
   const initial = structuredClone(INITIAL_MAIS_DB);
+  if (process.env.INITIAL_ADMIN_EMAIL?.trim() && initial.users.length > 0) {
+    initial.users[0].email = process.env.INITIAL_ADMIN_EMAIL.trim();
+  }
+  if (process.env.INITIAL_ADMIN_NAME?.trim() && initial.users.length > 0) {
+    initial.users[0].fullName = process.env.INITIAL_ADMIN_NAME.trim();
+  }
   // Apply INITIAL_ADMIN_PASSWORD from env so the default admin account is never passwordless.
   const initAdminPass = process.env.INITIAL_ADMIN_PASSWORD?.trim();
   if (initAdminPass && initial.users.length > 0) {
@@ -137,6 +149,19 @@ export const db: MaisDatabaseState = loadDatabase();
 
 export function resetDatabaseToClean(): MaisDatabaseState {
   const clean = structuredClone(INITIAL_MAIS_DB);
+  if (process.env.INITIAL_ADMIN_EMAIL?.trim() && clean.users.length > 0) {
+    clean.users[0].email = process.env.INITIAL_ADMIN_EMAIL.trim();
+  }
+  if (process.env.INITIAL_ADMIN_NAME?.trim() && clean.users.length > 0) {
+    clean.users[0].fullName = process.env.INITIAL_ADMIN_NAME.trim();
+  }
+  const initAdminPass = process.env.INITIAL_ADMIN_PASSWORD?.trim();
+  if (initAdminPass && clean.users.length > 0) {
+    clean.users[0].password = createHash('sha256').update(initAdminPass).digest('hex');
+  }
+  for (const key of Object.keys(db)) {
+    delete (db as any)[key];
+  }
   Object.assign(db, clean);
   saveDatabase(db);
   return db;
