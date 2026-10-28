@@ -100,6 +100,9 @@ expensesRouter.post(
     const {
       expenseDate,
       amountNgn,
+      quantity,
+      unit,
+      pricePerUnitNgn,
       category,
       description,
       supplierId,
@@ -110,18 +113,41 @@ expensesRouter.post(
       linkedAnimalId,
     } = req.body;
 
-    const amtCheck = validatePositiveNumber(amountNgn, 'Expense amount (NGN)');
     const descCheck = validateRequiredString(description, 'Expense description');
     const catCheck = validateRequiredString(category, 'Expense category');
-
-    if (!amtCheck.valid || !descCheck.valid || !catCheck.valid) {
-      res.status(400).json({
-        error: amtCheck.error || descCheck.error || catCheck.error,
-      });
+    if (!descCheck.valid || !catCheck.valid) {
+      res.status(400).json({ error: descCheck.error || catCheck.error });
       return;
     }
 
-    const amt = Number(amountNgn);
+    // Quantity-based pricing (e.g. "5 Bags at NGN 12,000 each"): when both are
+    // supplied, Total Price is always computed here, never trusted from the client.
+    const usesQuantityPricing = quantity !== undefined && quantity !== null && quantity !== '';
+    let amt: number;
+    let qtyNum: number | null = null;
+    let pricePerUnitNum: number | null = null;
+    let unitVal: string | null = null;
+
+    if (usesQuantityPricing) {
+      const qtyCheck = validatePositiveNumber(quantity, 'Quantity');
+      const priceCheck = validatePositiveNumber(pricePerUnitNgn, 'Price per unit');
+      if (!qtyCheck.valid || !priceCheck.valid) {
+        res.status(400).json({ error: qtyCheck.error || priceCheck.error });
+        return;
+      }
+      qtyNum = Number(quantity);
+      pricePerUnitNum = Number(pricePerUnitNgn);
+      unitVal = String(unit || 'Units').trim();
+      amt = Math.round(qtyNum * pricePerUnitNum);
+    } else {
+      const amtCheck = validatePositiveNumber(amountNgn, 'Expense amount (NGN)');
+      if (!amtCheck.valid) {
+        res.status(400).json({ error: amtCheck.error });
+        return;
+      }
+      amt = Number(amountNgn);
+    }
+
     const dateStr = expenseDate || new Date().toISOString().slice(0, 10);
     const expId = `EXP-${Date.now()}`;
     const canSelfApprove = canPerformAction(
@@ -158,6 +184,9 @@ expensesRouter.post(
       transactionCode: generateExpenseTransactionCode(db.expenses),
       expenseDate: dateStr,
       amountNgn: amt,
+      quantity: qtyNum,
+      unit: unitVal,
+      pricePerUnitNgn: pricePerUnitNum,
       category,
       description: String(description).trim(),
       supplierId: resolvedSupplier ? resolvedSupplier.id : supplierId || null,

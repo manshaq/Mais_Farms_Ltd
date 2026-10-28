@@ -3,6 +3,7 @@ import {
   ExpenseCategory,
   MaisDatabaseState,
 } from '../../types/mais';
+import { PRACTICAL_UNITS } from '../../constants/units';
 import { SelectWithCustom } from '../SelectWithCustom';
 import { ModalDialogShell } from './ModalDialogShell';
 
@@ -23,7 +24,11 @@ export const RecordExpenseModal: React.FC<RecordExpenseModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const [useQuantityPricing, setUseQuantityPricing] = useState(false);
   const [expAmount, setExpAmount] = useState('');
+  const [expQuantity, setExpQuantity] = useState('');
+  const [expUnit, setExpUnit] = useState('Units');
+  const [expPricePerUnit, setExpPricePerUnit] = useState('');
   const [expCategory, setExpCategory] = useState<ExpenseCategory>('Feed & Nutrition');
   const [expDesc, setExpDesc] = useState('');
   const [expSupplier, setExpSupplier] = useState('Grand Cereals Ltd');
@@ -43,6 +48,13 @@ export const RecordExpenseModal: React.FC<RecordExpenseModalProps> = ({
     ])
   );
 
+  const qtyNum = Number(expQuantity) || 0;
+  const pricePerUnitNum = Number(expPricePerUnit) || 0;
+  const liveQuantityTotal = qtyNum * pricePerUnitNum;
+
+  const formatNaira = (amount: number) =>
+    `₦${amount.toLocaleString('en-NG', { maximumFractionDigits: 0 })}`;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -50,7 +62,10 @@ export const RecordExpenseModal: React.FC<RecordExpenseModalProps> = ({
     try {
       await onRecordExpense({
         expenseDate: expDate,
-        amountNgn: Number(expAmount),
+        amountNgn: useQuantityPricing ? liveQuantityTotal : Number(expAmount),
+        quantity: useQuantityPricing ? qtyNum : undefined,
+        unit: useQuantityPricing ? expUnit : undefined,
+        pricePerUnitNgn: useQuantityPricing ? pricePerUnitNum : undefined,
         category: expCategory,
         description: expDesc,
         supplierName: expSupplier,
@@ -69,27 +84,87 @@ export const RecordExpenseModal: React.FC<RecordExpenseModalProps> = ({
 
   return (
     <ModalDialogShell
-      title="Record Operating Expense"
+      title="Record Expense"
       errorMsg={errorMsg}
       submitting={submitting}
       onClose={onClose}
       onSubmit={handleSubmit}
     >
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block font-semibold text-slate-700 mb-1.5">
-            Amount (NGN) <span className="text-emerald-700">*</span>
+        <div className="md:col-span-2">
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={useQuantityPricing}
+              onChange={(e) => setUseQuantityPricing(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            This expense has a Quantity and Price per Unit (e.g. 5 Bags at ₦12,000 each)
           </label>
-          <input
-            type="number"
-            min="1"
-            required
-            value={expAmount}
-            onChange={(e) => setExpAmount(e.target.value)}
-            placeholder="Enter amount in NGN"
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
-          />
         </div>
+
+        {useQuantityPricing ? (
+          <>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Quantity <span className="text-emerald-700">*</span>
+              </label>
+              <input
+                type="number"
+                min="0.01"
+                step="0.01"
+                required
+                value={expQuantity}
+                onChange={(e) => setExpQuantity(e.target.value)}
+                placeholder="How many"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
+              />
+            </div>
+            <SelectWithCustom
+              label="Unit"
+              required
+              value={expUnit}
+              onChange={(v) => setExpUnit(v)}
+              options={PRACTICAL_UNITS}
+              placeholder="Type custom unit..."
+            />
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Price per Unit (₦) <span className="text-emerald-700">*</span>
+              </label>
+              <input
+                type="number"
+                min="1"
+                required
+                value={expPricePerUnit}
+                onChange={(e) => setExpPricePerUnit(e.target.value)}
+                placeholder={`Price for one ${expUnit}`}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">Total Price (₦)</label>
+              <div className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono bg-slate-50 font-semibold text-slate-900">
+                {formatNaira(liveQuantityTotal)}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div>
+            <label className="block font-semibold text-slate-700 mb-1.5">
+              Amount (₦) <span className="text-emerald-700">*</span>
+            </label>
+            <input
+              type="number"
+              min="1"
+              required
+              value={expAmount}
+              onChange={(e) => setExpAmount(e.target.value)}
+              placeholder="Enter the total amount"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
+            />
+          </div>
+        )}
 
         <SelectWithCustom
           label="Expense Category"
@@ -119,13 +194,13 @@ export const RecordExpenseModal: React.FC<RecordExpenseModalProps> = ({
             required
             value={expDesc}
             onChange={(e) => setExpDesc(e.target.value)}
-            placeholder="Describe the expenditure item or service"
+            placeholder="What was this expense for?"
             className="w-full px-3 py-2 border border-slate-300 rounded-lg"
           />
         </div>
 
         <SelectWithCustom
-          label="Supplier / Payee"
+          label="Supplier or Seller"
           required
           value={expSupplier}
           onChange={(v) => setExpSupplier(v)}

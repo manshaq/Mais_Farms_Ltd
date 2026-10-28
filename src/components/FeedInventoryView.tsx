@@ -4,9 +4,12 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Wheat,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import {
   Animal,
+  FeedPurchase,
   MaisDatabaseState,
   StaffUser,
 } from '../types/mais';
@@ -14,6 +17,7 @@ import {
   canPerformAction,
   ProductStockSummary,
 } from '../domain/farmRules';
+import { EditFeedPurchaseModal } from './modals/EditFeedPurchaseModal';
 
 interface FeedInventoryViewProps {
   db: MaisDatabaseState;
@@ -21,6 +25,8 @@ interface FeedInventoryViewProps {
   currentUser: StaffUser;
   onOpenFeedModal: () => void;
   onOpenAnimalProfile: (animal: Animal) => void;
+  onEditFeedPurchase: (purchaseId: string, payload: any) => Promise<void>;
+  onDeleteFeedPurchase: (purchaseId: string) => Promise<void>;
 }
 
 export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
@@ -29,9 +35,26 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
   currentUser,
   onOpenFeedModal,
   onOpenAnimalProfile,
+  onEditFeedPurchase,
+  onDeleteFeedPurchase,
 }) => {
   const [subTab, setSubTab] = useState<'stock' | 'issues' | 'purchases'>('stock');
+  const [editingPurchase, setEditingPurchase] = useState<FeedPurchase | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const canManage = canPerformAction(currentUser.role, 'MANAGE_FEED');
+
+  const handleDelete = async (purchase: FeedPurchase) => {
+    const ok = window.confirm(
+      `Delete this feed purchase (${purchase.productName}, ${purchase.quantityReceived} ${purchase.unit})? This cannot be undone.`
+    );
+    if (!ok) return;
+    setDeletingId(purchase.id);
+    try {
+      await onDeleteFeedPurchase(purchase.id);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -135,18 +158,18 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
                   </div>
 
                   <p className="text-2xl font-bold font-mono text-slate-900 tabular-nums mt-3">
-                    {st.closingStock.toLocaleString()} kg
+                    {st.closingStock.toLocaleString()} {st.unit}
                   </p>
                   <p className="text-xs text-slate-500 font-mono mt-0.5">
-                    Reorder Level: {st.reorderLevel} kg · NGN{' '}
-                    {st.standardUnitCostNgn}/kg
+                    Reorder Level: {st.reorderLevel} {st.unit} · ₦
+                    {st.standardUnitCostNgn}/{st.unit}
                   </p>
 
                   <div className="mt-3 pt-3 border-t border-slate-200/80 grid grid-cols-2 gap-1 text-[11px] font-mono text-slate-600">
-                    <div>Opening: {st.openingStock} kg</div>
-                    <div>+ Receipts: {st.receipts} kg</div>
-                    <div>- Issues: {st.issues} kg</div>
-                    <div>- Losses: {st.recordedLosses} kg</div>
+                    <div>Opening: {st.openingStock} {st.unit}</div>
+                    <div>+ Receipts: {st.receipts} {st.unit}</div>
+                    <div>- Issues: {st.issues} {st.unit}</div>
+                    <div>- Losses: {st.recordedLosses} {st.unit}</div>
                   </div>
                 </div>
               ))}
@@ -201,7 +224,7 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
                           </td>
                           <td className="py-2.5 px-4 font-mono font-semibold text-right">
                             {m.movementType === 'RECEIPT' ? '+' : '-'}
-                            {m.quantity} kg
+                            {m.quantity} {prod?.unit || 'kg'}
                           </td>
                           <td className="py-2.5 px-4 text-slate-600">
                             {m.reason} <span className="font-mono">({m.referenceId})</span>
@@ -247,7 +270,7 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
                         <span>Issued by {iss.responsibleStaff}</span>
                       </div>
                       <h3 className="text-sm font-bold text-slate-900 mt-1">
-                        {iss.quantity} kg {iss.productName} →{' '}
+                        {iss.quantity} {iss.unit || 'kg'} {iss.productName} →{' '}
                         {iss.targetType === 'Group'
                           ? `Group: ${iss.targetGroup}`
                           : `Animal: ${iss.targetAnimalId}`}
@@ -259,7 +282,7 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
                     </div>
                     <div className="text-right">
                       <p className="font-mono text-sm font-bold text-slate-900 tabular-nums">
-                        NGN {iss.totalCostNgn.toLocaleString()}
+                        ₦{iss.totalCostNgn.toLocaleString()}
                       </p>
                       <p className="text-[11px] text-slate-500">
                         Split across {allocations.length} animal(s)
@@ -300,7 +323,7 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
                                 <td className="py-2 px-3 font-mono">{al.allocationMethod}</td>
                                 <td className="py-2 px-3 text-slate-600">{al.notes}</td>
                                 <td className="py-2 pl-3 font-mono font-semibold text-right">
-                                  NGN {al.amountNgn.toLocaleString()}
+                                  ₦{al.amountNgn.toLocaleString()}
                                 </td>
                               </tr>
                             );
@@ -327,13 +350,15 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-                  <th className="py-3 px-4 font-semibold">Date & Invoice</th>
-                  <th className="py-3 px-4 font-semibold">Supplier</th>
-                  <th className="py-3 px-4 font-semibold">Feed Product & Batch</th>
-                  <th className="py-3 px-4 font-semibold text-right">Qty Received</th>
-                  <th className="py-3 px-4 font-semibold text-right">Unit Price</th>
+                  <th className="py-3 px-4 font-semibold">Date Bought & Invoice</th>
+                  <th className="py-3 px-4 font-semibold">Supplier or Seller</th>
+                  <th className="py-3 px-4 font-semibold">Feed Name & Batch</th>
+                  <th className="py-3 px-4 font-semibold text-right">Quantity</th>
+                  <th className="py-3 px-4 font-semibold text-right">Price per Unit</th>
                   <th className="py-3 px-4 font-semibold text-right">Transport</th>
-                  <th className="py-3 px-4 font-semibold text-right">Total Cost</th>
+                  <th className="py-3 px-4 font-semibold text-right">Total Price</th>
+                  <th className="py-3 px-4 font-semibold">Notes</th>
+                  {canManage && <th className="py-3 px-4 font-semibold text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -349,23 +374,53 @@ export const FeedInventoryView: React.FC<FeedInventoryViewProps> = ({
                       <span className="block font-mono text-slate-500">Batch: {fp.batchNumber}</span>
                     </td>
                     <td className="py-3 px-4 font-mono font-semibold text-right">
-                      {fp.quantityReceived.toLocaleString()} kg
+                      {fp.quantityReceived.toLocaleString()} {fp.unit || 'kg'}
                     </td>
                     <td className="py-3 px-4 font-mono text-right">
-                      NGN {fp.unitPriceNgn.toLocaleString()}/kg
+                      ₦{fp.unitPriceNgn.toLocaleString()}/{fp.unit || 'kg'}
                     </td>
                     <td className="py-3 px-4 font-mono text-right">
-                      NGN {fp.transportCostNgn.toLocaleString()}
+                      ₦{fp.transportCostNgn.toLocaleString()}
                     </td>
                     <td className="py-3 px-4 font-mono font-bold text-right text-slate-900">
-                      NGN {fp.totalCostNgn.toLocaleString()}
+                      ₦{fp.totalCostNgn.toLocaleString()}
                     </td>
+                    <td className="py-3 px-4 text-slate-600">{fp.notes || '—'}</td>
+                    {canManage && (
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => setEditingPurchase(fp)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-slate-600 hover:text-slate-900 font-medium"
+                          aria-label={`Edit feed purchase ${fp.invoiceNumber}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(fp)}
+                          disabled={deletingId === fp.id}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-red-600 hover:text-red-800 font-medium disabled:opacity-50"
+                          aria-label={`Delete feed purchase ${fp.invoiceNumber}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> {deletingId === fp.id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </div>
+      )}
+
+      {editingPurchase && (
+        <EditFeedPurchaseModal
+          purchase={editingPurchase}
+          onClose={() => setEditingPurchase(null)}
+          onSave={onEditFeedPurchase}
+        />
       )}
     </div>
   );

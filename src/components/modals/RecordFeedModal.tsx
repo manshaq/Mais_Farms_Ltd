@@ -3,6 +3,7 @@ import {
   AllocationMethod,
   MaisDatabaseState,
 } from '../../types/mais';
+import { PRACTICAL_UNITS } from '../../constants/units';
 import { SelectWithCustom } from '../SelectWithCustom';
 import { ModalDialogShell } from './ModalDialogShell';
 
@@ -29,6 +30,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
   const [feedProductId, setFeedProductId] = useState(db.feedProducts[0]?.id || '');
   const [newProductName, setNewProductName] = useState('');
   const [newProductCategory, setNewProductCategory] = useState('Concentrate');
+  const [newProductUnit, setNewProductUnit] = useState('kg');
   const [newProductStorageLocation, setNewProductStorageLocation] = useState('Main Feed Store');
   const [newProductReorderLevel, setNewProductReorderLevel] = useState('200');
   const [feedQty, setFeedQty] = useState('');
@@ -36,6 +38,8 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
   const [feedTransportCost, setFeedTransportCost] = useState('0');
   const [feedSupplierName, setFeedSupplierName] = useState('Grand Cereals Ltd');
   const [feedInvoice, setFeedInvoice] = useState('');
+  const [purchaseDate, setPurchaseDate] = useState(todayStr);
+  const [feedNotes, setFeedNotes] = useState('');
   const [feedTargetType, setFeedTargetType] = useState<'Group' | 'Animal'>('Group');
   const [feedTargetGroup, setFeedTargetGroup] = useState('Lactating Cows');
   const [feedTargetAnimalId, setFeedTargetAnimalId] = useState(db.animals[0]?.id || '');
@@ -63,6 +67,17 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
     ])
   );
 
+  const selectedProduct = db.feedProducts.find((p) => p.id === feedProductId);
+  const displayUnit = feedProductId === '__NEW__' ? newProductUnit : selectedProduct?.unit || 'kg';
+
+  const qtyNum = Number(feedQty) || 0;
+  const priceNum = Number(feedUnitPrice) || 0;
+  const transportNum = Number(feedTransportCost) || 0;
+  const livePurchaseTotal = qtyNum * priceNum + transportNum;
+
+  const formatNaira = (amount: number) =>
+    `₦${amount.toLocaleString('en-NG', { maximumFractionDigits: 0 })}`;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
@@ -82,10 +97,11 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
         });
       } else if (feedSubMode === 'purchase') {
         await onRecordFeedPurchase({
-          purchaseDate: todayStr,
+          purchaseDate,
           productId: feedProductId,
           newProductName: feedProductId === '__NEW__' ? newProductName : undefined,
           newProductCategory: feedProductId === '__NEW__' ? newProductCategory : undefined,
+          newProductUnit: feedProductId === '__NEW__' ? newProductUnit : undefined,
           newProductStorageLocation:
             feedProductId === '__NEW__' ? newProductStorageLocation : undefined,
           newProductReorderLevel:
@@ -96,6 +112,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
           supplierName: feedSupplierName,
           invoiceNumber: feedInvoice || `INV-${Date.now().toString().slice(-5)}`,
           paymentStatus: 'Paid',
+          notes: feedNotes,
         });
       } else {
         await onRecordFeedLoss({
@@ -107,7 +124,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
       }
       onClose();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to record feed transaction.');
+      setErrorMsg(err.message || 'Failed to save feed record.');
     } finally {
       setSubmitting(false);
     }
@@ -115,7 +132,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
 
   return (
     <ModalDialogShell
-      title="Feed Inventory & Allocation"
+      title="Feed Stock"
       errorMsg={errorMsg}
       submitting={submitting}
       onClose={onClose}
@@ -132,7 +149,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                 : 'bg-slate-100 text-slate-700'
             }`}
           >
-            Receive Feed Purchase
+            Record Feed Purchase
           </button>
           <button
             type="button"
@@ -143,7 +160,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                 : 'bg-slate-100 text-slate-700'
             }`}
           >
-            Issue &amp; Allocate Feed
+            Issue Feed
           </button>
           <button
             type="button"
@@ -154,14 +171,14 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                 : 'bg-slate-100 text-slate-700'
             }`}
           >
-            Record Loss / Spoilage
+            Record Feed Loss
           </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block font-semibold text-slate-700 mb-1.5">
-              Feed Product <span className="text-emerald-700">*</span>
+              Feed Name <span className="text-emerald-700">*</span>
             </label>
             <select
               value={feedProductId}
@@ -170,26 +187,27 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
             >
               {db.feedProducts.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.name} ({p.category}) — NGN {p.standardUnitCostNgn}/kg
+                  {p.name} ({p.category}) — ₦{p.standardUnitCostNgn}/{p.unit}
                 </option>
               ))}
               {feedSubMode === 'purchase' && (
-                <option value="__NEW__">+ Create New Feed Product...</option>
+                <option value="__NEW__">+ Add a new feed...</option>
               )}
             </select>
           </div>
 
           <div>
             <label className="block font-semibold text-slate-700 mb-1.5">
-              Quantity (kg) <span className="text-emerald-700">*</span>
+              Quantity ({displayUnit}) <span className="text-emerald-700">*</span>
             </label>
             <input
               type="number"
-              min="1"
+              min="0.01"
+              step="0.01"
               required
               value={feedQty}
               onChange={(e) => setFeedQty(e.target.value)}
-              placeholder="Quantity in kg"
+              placeholder={`How much in ${displayUnit}`}
               className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
             />
           </div>
@@ -199,7 +217,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
             <div className="md:col-span-2">
               <label className="block font-semibold text-slate-700 mb-1.5">
-                New Feed Product Name <span className="text-emerald-700">*</span>
+                New Feed Name <span className="text-emerald-700">*</span>
               </label>
               <input
                 type="text"
@@ -211,7 +229,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
               />
             </div>
             <SelectWithCustom
-              label="Feed Category"
+              label="Feed Type"
               required
               value={newProductCategory}
               onChange={(v) => setNewProductCategory(v)}
@@ -222,7 +240,15 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                 'Calf Milk Replacer',
                 'Hay / Forage',
               ]}
-              placeholder="Type custom feed category..."
+              placeholder="Type custom feed type..."
+            />
+            <SelectWithCustom
+              label="Unit"
+              required
+              value={newProductUnit}
+              onChange={(v) => setNewProductUnit(v)}
+              options={PRACTICAL_UNITS}
+              placeholder="Type custom unit..."
             />
             <SelectWithCustom
               label="Storage Location"
@@ -239,7 +265,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
             />
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">
-                Low-Stock Reorder Alert Level (kg)
+                Low-Stock Alert Level ({newProductUnit})
               </label>
               <input
                 type="number"
@@ -256,22 +282,22 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">
-                Issue Target Type
+                Who Gets the Feed
               </label>
               <select
                 value={feedTargetType}
                 onChange={(e) => setFeedTargetType(e.target.value as 'Group' | 'Animal')}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
               >
-                <option value="Group">Shared Herd Group</option>
-                <option value="Animal">Single Specific Animal (100% Direct)</option>
+                <option value="Group">A Herd Group (Shared Cost)</option>
+                <option value="Animal">One Specific Animal (Full Cost)</option>
               </select>
             </div>
 
             {feedTargetType === 'Group' ? (
               <>
                 <SelectWithCustom
-                  label="Target Herd Group"
+                  label="Herd Group"
                   required
                   value={feedTargetGroup}
                   onChange={(v) => setFeedTargetGroup(v)}
@@ -280,7 +306,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                 />
                 <div className="md:col-span-2">
                   <label className="block font-semibold text-slate-700 mb-1.5">
-                    Shared Cost Allocation Formula
+                    How to Share the Cost
                   </label>
                   <select
                     value={feedAllocMethod}
@@ -290,13 +316,13 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
                   >
                     <option value="weight_proportion">
-                      Weight Proportion (Proportional to each animal&apos;s live weight)
+                      By Weight (Heavier animals get a bigger share of the cost)
                     </option>
                     <option value="equal_headcount">
-                      Equal Headcount (Split equally across active animals in group)
+                      Equally (Split evenly across all animals in the group)
                     </option>
                     <option value="animal_days">
-                      Animal-Days Present (Proportional to days present in group)
+                      By Days Present (Based on how long each animal has been in the group)
                     </option>
                   </select>
                 </div>
@@ -304,7 +330,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
             ) : (
               <div>
                 <label className="block font-semibold text-slate-700 mb-1.5">
-                  Recipient Animal
+                  Animal
                 </label>
                 <select
                   value={feedTargetAnimalId}
@@ -326,7 +352,19 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">
-                Unit Price per kg (NGN) <span className="text-emerald-700">*</span>
+                Date Bought <span className="text-emerald-700">*</span>
+              </label>
+              <input
+                type="date"
+                required
+                value={purchaseDate}
+                onChange={(e) => setPurchaseDate(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
+              />
+            </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Price per Unit (₦ per {displayUnit}) <span className="text-emerald-700">*</span>
               </label>
               <input
                 type="number"
@@ -334,40 +372,64 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                 required
                 value={feedUnitPrice}
                 onChange={(e) => setFeedUnitPrice(e.target.value)}
-                placeholder="Price per kg in NGN"
+                placeholder={`Price for one ${displayUnit}`}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
               />
             </div>
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">
-                Transport / Offloading Cost (NGN)
+                Transport Cost (₦)
               </label>
               <input
                 type="number"
                 min="0"
                 value={feedTransportCost}
                 onChange={(e) => setFeedTransportCost(e.target.value)}
+                placeholder="0 if none"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
               />
             </div>
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Total Price (₦)
+              </label>
+              <div className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono bg-slate-50 text-slate-900 font-semibold">
+                {formatNaira(livePurchaseTotal)}
+              </div>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Quantity × Price per Unit, plus Transport Cost.
+              </p>
+            </div>
             <SelectWithCustom
-              label="Supplier / Vendor"
+              label="Supplier or Seller"
               required
               value={feedSupplierName}
               onChange={(v) => setFeedSupplierName(v)}
               options={existingSuppliers}
-              placeholder="Type custom feed supplier..."
+              placeholder="Type custom supplier or seller..."
             />
             <div>
               <label className="block font-semibold text-slate-700 mb-1.5">
-                Supplier Invoice #
+                Invoice / Receipt No.
               </label>
               <input
                 type="text"
                 value={feedInvoice}
                 onChange={(e) => setFeedInvoice(e.target.value)}
-                placeholder="Optional invoice reference"
+                placeholder="Optional invoice or receipt number"
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg font-mono"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="block font-semibold text-slate-700 mb-1.5">
+                Notes
+              </label>
+              <input
+                type="text"
+                value={feedNotes}
+                onChange={(e) => setFeedNotes(e.target.value)}
+                placeholder="Anything else worth noting about this purchase"
+                className="w-full px-3 py-2 border border-slate-300 rounded-lg"
               />
             </div>
           </div>
@@ -376,7 +438,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
         {feedSubMode === 'loss' && (
           <div>
             <SelectWithCustom
-              label="Reason for Spoilage / Wastage"
+              label="Reason for Loss"
               required
               value={feedLossReason}
               onChange={(v) => setFeedLossReason(v)}
@@ -386,7 +448,7 @@ export const RecordFeedModal: React.FC<RecordFeedModalProps> = ({
                 'Rodent / pest damage',
                 'Expired batch disposal',
               ]}
-              placeholder="Type custom wastage or loss reason..."
+              placeholder="Type custom reason for loss..."
             />
           </div>
         )}

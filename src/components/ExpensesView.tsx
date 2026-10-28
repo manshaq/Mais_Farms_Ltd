@@ -723,6 +723,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                           <td className="py-3 px-4">
                             <p className="font-semibold text-slate-900">{exp.category}</p>
                             <p className="text-slate-600">{exp.description}</p>
+                            {exp.quantity != null && exp.pricePerUnitNgn != null && (
+                              <p className="text-[11px] font-mono text-slate-500 mt-0.5">
+                                {exp.quantity.toLocaleString()} {exp.unit || 'Units'} × ₦
+                                {exp.pricePerUnitNgn.toLocaleString()}
+                              </p>
+                            )}
                             {exp.isReversed && (
                               <p className="text-red-700 font-medium mt-0.5">
                                 REVERSED: {exp.reversalReason}

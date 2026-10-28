@@ -644,7 +644,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               return (
                 <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
                   <span>
-                    Period Expenditure: <strong>NGN {summary.totalExpenditureNgn.toLocaleString()}</strong>
+                    Period Expenses: <strong>₦{summary.totalExpenditureNgn.toLocaleString()}</strong>
                   </span>
                   <span>
                     Settled: <strong>NGN {summary.totalPaidNgn.toLocaleString()}</strong>
