@@ -12,7 +12,7 @@ import {
   MaisDatabaseState,
   StaffUser,
 } from '../../src/types/mais.ts';
-import { insertAnimalEvent } from './supabaseService.ts';
+import { insertAnimalEvent, insertAuditLog, syncDatabaseToSupabase } from './supabaseService.ts';
 
 const isTestEnv =
   process.env.NODE_ENV === 'test' ||
@@ -199,6 +199,9 @@ export function restoreDatabaseFromSnapshot(newState: MaisDatabaseState): {
   }
   Object.assign(db, sanitized);
   saveDatabase(db);
+  syncDatabaseToSupabase(db).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase re-sync after restore warning:', err?.message || err);
+  });
   return { rollbackSnapshotFile };
 }
 
@@ -235,6 +238,9 @@ export function appendAudit(
     integrityHash,
   };
   db.auditLogs.unshift(entry);
+  insertAuditLog(entry).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase audit log persistence warning:', err?.message || err);
+  });
   return entry;
 }
 
@@ -246,7 +252,12 @@ export function appendAnimalEvent(
   summary: string,
   referenceId: string,
   costNgn: number | null,
-  recordedBy: string
+  recordedBy: string,
+  // Optional: when the referenced animal was itself just created in this same
+  // request (its own Supabase insert still in flight), pass that pending
+  // promise so this event's FK-constrained insert waits for it instead of
+  // racing it.
+  afterAnimalPersisted?: Promise<unknown>
 ): AnimalEvent {
   const evt: AnimalEvent = {
     id: `EVT-${Date.now()}-${randomUUID().slice(0, 8)}`,
@@ -260,9 +271,12 @@ export function appendAnimalEvent(
     recordedBy,
   };
   db.animalEvents.push(evt);
-  insertAnimalEvent(evt).catch((err) => {
-    console.warn('⚠️ [MAIS DB] Supabase animal event persistence warning:', err?.message || err);
-  });
+  (afterAnimalPersisted || Promise.resolve())
+    .catch(() => {})
+    .then(() => insertAnimalEvent(evt))
+    .catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase animal event persistence warning:', err?.message || err);
+    });
   return evt;
 }
 

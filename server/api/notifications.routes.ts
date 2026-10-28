@@ -10,6 +10,7 @@ import {
   StaffUser,
 } from '../../src/types/mais.ts';
 import { appendAudit, db, saveDatabase } from '../db/store.ts';
+import { insertEmailLog, upsertNotificationSettings } from '../db/supabaseService.ts';
 import { requirePermission, StaffRequest } from '../middleware/auth.ts';
 
 export const notificationsRouter = Router();
@@ -91,6 +92,9 @@ async function dispatchEmailPayload(params: {
     db.emailLogs = [];
   }
   db.emailLogs.unshift(logEntry);
+  insertEmailLog(logEntry).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase email log persistence warning:', err?.message || err);
+  });
   return logEntry;
 }
 
@@ -187,6 +191,11 @@ export async function runDueTomorrowRemindersCheck(params: {
   }
 
   saveDatabase(db);
+  if (db.notificationSettings) {
+    upsertNotificationSettings(db.notificationSettings).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase notification settings persistence warning:', err?.message || err);
+    });
+  }
   return {
     referenceDate,
     sentCount,
@@ -281,6 +290,9 @@ notificationsRouter.put(
     );
 
     saveDatabase(db);
+    upsertNotificationSettings(db.notificationSettings).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase notification settings persistence warning:', err?.message || err);
+    });
     res.json({ notificationSettings: db.notificationSettings });
   }
 );
@@ -330,6 +342,11 @@ notificationsRouter.post(
     );
 
     saveDatabase(db);
+    if (db.notificationSettings) {
+      upsertNotificationSettings(db.notificationSettings).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase notification settings persistence warning:', err?.message || err);
+      });
+    }
     res.status(201).json({
       emailLog: logEntry,
       recipientCount: pkg.recipients.length,
@@ -439,6 +456,9 @@ export function startNotificationScheduler(): void {
             `Automatically dispatched monthly report (${startDate} to ${endDate}) to ${pkg.recipients.join(', ')}.`
           );
           saveDatabase(db);
+          upsertNotificationSettings(settings).catch((err) => {
+            console.warn('⚠️ [MAIS DB] Supabase notification settings persistence warning:', err?.message || err);
+          });
         }
       }
     } catch (err) {

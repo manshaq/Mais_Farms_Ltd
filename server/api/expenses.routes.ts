@@ -12,7 +12,15 @@ import {
   generateSupplierId,
   saveDatabase,
 } from '../db/store.ts';
-import { insertExpense, insertPayment } from '../db/supabaseService.ts';
+import {
+  insertExpense,
+  insertExpenseAllocation,
+  insertPayment,
+  insertSupplier,
+  insertTask,
+  updateExpense,
+  updateTask,
+} from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
   validatePositiveNumber,
@@ -126,6 +134,9 @@ expensesRouter.post(
     let resolvedSupplier = db.suppliers.find(
       (s) => s.id === supplierId || s.name.toLowerCase() === cleanSupplierName.toLowerCase()
     );
+    // Expense below has an FK on supplier_id when a new supplier is created
+    // here, so its Supabase write must wait for the supplier's.
+    let supplierReady: Promise<unknown> = Promise.resolve();
     if (!resolvedSupplier && cleanSupplierName) {
       resolvedSupplier = {
         id: generateSupplierId(db.suppliers),
@@ -137,6 +148,9 @@ expensesRouter.post(
         bankDetails: '',
       };
       db.suppliers.push(resolvedSupplier);
+      supplierReady = insertSupplier(resolvedSupplier).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase supplier persistence warning:', err?.message || err);
+      });
     }
 
     const newExp: Expense = {
@@ -162,12 +176,17 @@ expensesRouter.post(
     };
 
     db.expenses.unshift(newExp);
-    insertExpense(newExp).catch((e) => console.warn('Supabase expense sync warning:', e));
+    // Allocation/payment below have an FK on expense_id, so they must wait
+    // for this expense's Supabase write instead of racing it.
+    const expenseReady = supplierReady
+      .catch(() => {})
+      .then(() => insertExpense(newExp))
+      .catch((e) => console.warn('Supabase expense sync warning:', e));
 
     if (linkedAnimalId) {
       const animal = db.animals.find((a) => a.id === linkedAnimalId);
       if (animal) {
-        db.expenseAllocations.unshift({
+        const expAlloc = {
           id: `ALC-${Date.now()}`,
           expenseId: expId,
           feedIssueId: null,
@@ -182,7 +201,13 @@ expensesRouter.post(
           allocationMethod: 'Direct 100%',
           amountNgn: amt,
           notes: newExp.description,
-        });
+        };
+        db.expenseAllocations.unshift(expAlloc);
+        expenseReady
+          .then(() => insertExpenseAllocation(expAlloc))
+          .catch((err) => {
+            console.warn('⚠️ [MAIS DB] Supabase expense allocation persistence warning:', err?.message || err);
+          });
 
         appendAnimalEvent(
           animal.id,
@@ -198,33 +223,43 @@ expensesRouter.post(
     }
 
     if (newExp.paymentStatus === 'Paid') {
-      db.payments.push({
+      const autoPayment = {
         id: `PAY-${Date.now()}`,
         expenseId: expId,
         paymentDate: dateStr,
         amountNgn: amt,
         paymentMethod:
-          newExp.paymentMethod === 'Credit' ? 'Bank Transfer' : newExp.paymentMethod,
+          newExp.paymentMethod === 'Credit' ? ('Bank Transfer' as const) : newExp.paymentMethod,
         referenceNumber: `REF-${newExp.transactionCode}`,
         recordedBy: user.fullName,
         notes: 'Settled upon entry',
-      });
+      };
+      db.payments.push(autoPayment);
+      expenseReady
+        .then(() => insertPayment(autoPayment))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase payment persistence warning:', err?.message || err);
+        });
     }
 
     if (newExp.approvalStatus === 'Pending Approval') {
-      db.tasks.unshift({
+      const approvalTask = {
         id: `TSK-${Date.now()}`,
         title: `Approve Expense ${newExp.transactionCode}: ${newExp.description} (NGN ${amt.toLocaleString()})`,
-        category: 'Expense Approval',
+        category: 'Expense Approval' as const,
         dueDate: dateStr,
-        priority: 'Medium',
+        priority: 'Medium' as const,
         assignedTo: 'Dr. Bello Aliyu',
         animalId: linkedAnimalId || null,
         animalTag: null,
         referenceId: expId,
-        status: 'Pending',
+        status: 'Pending' as const,
         completionNotes: '',
         completedAt: null,
+      };
+      db.tasks.unshift(approvalTask);
+      insertTask(approvalTask).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase task persistence warning:', err?.message || err);
       });
     }
 
@@ -283,6 +318,9 @@ expensesRouter.post(
     insertPayment(payment).catch((e) => console.warn('Supabase payment sync warning:', e));
     const newTotalPaid = existingPaid + amt;
     expense.paymentStatus = newTotalPaid >= expense.amountNgn ? 'Paid' : 'Partially Paid';
+    updateExpense(expense.id, { paymentStatus: expense.paymentStatus }).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase expense update warning:', err?.message || err);
+    });
 
     appendAudit(
       user,
@@ -314,12 +352,25 @@ expensesRouter.post(
     const prev = expense.approvalStatus;
     expense.approvalStatus = 'Approved';
     expense.approvedBy = user.fullName;
+    updateExpense(expense.id, {
+      approvalStatus: expense.approvalStatus,
+      approvedBy: expense.approvedBy,
+    }).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase expense update warning:', err?.message || err);
+    });
 
     for (const t of db.tasks) {
       if (t.referenceId === expense.id && t.status !== 'Completed') {
         t.status = 'Completed';
         t.completedAt = new Date().toISOString().slice(0, 10);
         t.completionNotes = `Approved by ${user.fullName}`;
+        updateTask(t.id, {
+          status: t.status,
+          completedAt: t.completedAt,
+          completionNotes: t.completionNotes,
+        }).catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase task update warning:', err?.message || err);
+        });
       }
     }
 
@@ -360,6 +411,12 @@ expensesRouter.post(
     }
     expense.isReversed = true;
     expense.reversalReason = String(reason).trim();
+    updateExpense(expense.id, {
+      isReversed: expense.isReversed,
+      reversalReason: expense.reversalReason,
+    }).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase expense update warning:', err?.message || err);
+    });
 
     appendAudit(
       user,
@@ -431,8 +488,14 @@ expensesRouter.post(
       notes: String(notes || '').trim(),
     };
     db.payments.push(payment);
+    insertPayment(payment).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase payment persistence warning:', err?.message || err);
+    });
     const newTotalPaid = existingPaid + amt;
     expense.paymentStatus = newTotalPaid >= expense.amountNgn ? 'Paid' : 'Partially Paid';
+    updateExpense(expense.id, { paymentStatus: expense.paymentStatus }).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase expense update warning:', err?.message || err);
+    });
 
     appendAudit(
       user,

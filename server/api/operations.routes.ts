@@ -24,7 +24,13 @@ import {
 } from '../backup/backupService.ts';
 import { decryptAndDecompressBackup } from '../backup/cryptoVault.ts';
 import { activeSessions, normalizeRole, paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
-import { insertTask, softDeleteUser, syncDatabaseToSupabase, updateTask } from '../db/supabaseService.ts';
+import {
+  insertTask,
+  softDeleteUser,
+  syncDatabaseToSupabase,
+  updateTask,
+  upsertBackupSettings,
+} from '../db/supabaseService.ts';
 import { validateRequiredString } from '../validation/validators.ts';
 import { hashPassword, sanitizeUser } from './auth.routes.ts';
 
@@ -690,6 +696,9 @@ operationsRouter.put(
     );
 
     saveDatabase(db);
+    upsertBackupSettings(db.backupSettings).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase backup settings persistence warning:', err?.message || err);
+    });
     res.json({ backupSettings: db.backupSettings });
   }
 );

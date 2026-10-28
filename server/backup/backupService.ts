@@ -26,6 +26,7 @@ import {
   supabaseClient,
 } from '../db/store.ts';
 import { getMailTransportInfo } from '../api/notifications.routes.ts';
+import { insertBackupRun, insertEmailLog, updateBackupRun, upsertBackupSettings } from '../db/supabaseService.ts';
 import {
   compressAndEncryptBackup,
   computeSha256Hex,
@@ -191,7 +192,7 @@ async function sendAdminBackupFailureAlert(params: {
   if (!Array.isArray(db.emailLogs)) {
     db.emailLogs = [];
   }
-  db.emailLogs.unshift({
+  const emailLog: EmailNotificationLog = {
     id: `EML-BKP-ALERT-${Date.now()}`,
     sentAt: new Date().toISOString(),
     category: 'BACKUP_ALERT',
@@ -204,6 +205,10 @@ async function sendAdminBackupFailureAlert(params: {
     attachments: [],
     dedupKey: `BACKUP_ALERT:${params.runLog.id}`,
     triggeredBy: params.actor.fullName,
+  };
+  db.emailLogs.unshift(emailLog);
+  insertEmailLog(emailLog).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase email log persistence warning:', err?.message || err);
   });
 }
 
@@ -360,37 +365,14 @@ export async function executeEncryptedBackupJob(params: {
       if (retentionMeta.tier === 'monthly') {
         settings.lastMonthlyBackupMonth = startedAt.slice(0, 7);
       }
+      upsertBackupSettings(settings).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase backup settings persistence warning:', err?.message || err);
+      });
 
       // Sync metadata to Supabase backup_runs table if configured (without secrets)
-      if (supabaseClient) {
-        try {
-          await supabaseClient.from('backup_runs').upsert({
-            id: runLog.id,
-            snapshot_id: runLog.snapshotId,
-            started_at: runLog.startedAt,
-            completed_at: runLog.completedAt,
-            tier: runLog.tier,
-            engine: runLog.engine,
-            status: runLog.status,
-            attempt_count: runLog.attemptCount,
-            max_attempts: runLog.maxAttempts,
-            file_name: runLog.fileName,
-            uncompressed_size_bytes: runLog.uncompressedSizeBytes,
-            encrypted_size_bytes: runLog.encryptedSizeBytes,
-            encrypted: runLog.encrypted,
-            cipher: runLog.cipher,
-            sha256_checksum: runLog.sha256Checksum,
-            storage_destinations: runLog.storageDestinations,
-            s3_key: runLog.s3Key,
-            immutable_protected: runLog.immutableProtected,
-            object_lock_retain_until: runLog.objectLockRetainUntil,
-            retention_expires_at: runLog.retentionExpiresAt,
-            triggered_by: runLog.triggeredBy,
-          });
-        } catch {
-          // Proceed if Supabase backup_runs table migration has not been run yet
-        }
-      }
+      insertBackupRun(runLog).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase backup run persistence warning:', err?.message || err);
+      });
 
       const pruneRes = pruneExpiredBackups(completedAt);
 
@@ -455,6 +437,9 @@ export async function executeEncryptedBackupJob(params: {
   };
 
   db.backupRuns.unshift(failedRun);
+  insertBackupRun(failedRun).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase backup run persistence warning:', err?.message || err);
+  });
 
   await sendAdminBackupFailureAlert({
     runLog: failedRun,
@@ -502,6 +487,9 @@ export function pruneExpiredBackups(nowIso: string = new Date().toISOString()): 
         fs.unlinkSync(filePath);
       }
       expired.prunedAt = nowIso;
+      updateBackupRun(expired.id, { prunedAt: nowIso }).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase backup run prune-sync warning:', err?.message || err);
+      });
       prunedFileNames.push(expired.fileName);
     } catch {
       // Keep record if file cannot be unlinked
