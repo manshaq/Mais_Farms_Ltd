@@ -7,7 +7,7 @@ import {
   computeHealthRankings,
 } from '../../src/domain/farmRules.ts';
 import { db, resetDatabaseToClean, supabaseClient, supabaseUrl } from '../db/store.ts';
-import { attachStaffUser, requirePermission, StaffRequest } from '../middleware/auth.ts';
+import { attachStaffUser, pruneExpiredSessions, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import { animalsRouter } from './animals.routes.ts';
 import { authRouter, sanitizeUser } from './auth.routes.ts';
 import { healthRouter } from './health.routes.ts';
@@ -32,9 +32,17 @@ export const apiRouter = Router();
 startNotificationScheduler();
 startAutomatedBackupScheduler();
 
+// Periodically prune expired tokens from memory every 15 minutes
+const sessionPruner = setInterval(() => {
+  pruneExpiredSessions();
+}, 15 * 60 * 1000);
+sessionPruner.unref();
+
+export let hydrationPromise: Promise<boolean> | null = null;
 if (supabaseClient) {
-  hydrateDatabaseFromSupabase(db).catch((err) => {
+  hydrationPromise = hydrateDatabaseFromSupabase(db).catch((err) => {
     console.warn('⚠️ [MAIS DB] Supabase initial hydration warning:', err?.message || err);
+    return false;
   });
 }
 
@@ -46,7 +54,14 @@ apiRouter.use(authRouter);
  * Returns the complete operational state and server-computed analytics.
  * Redacts administrative and audit data for non-Admin roles (M5).
  */
-apiRouter.get('/state', requirePermission('VIEW_RECORDS'), (req: StaffRequest, res: Response) => {
+apiRouter.get('/state', requirePermission('VIEW_RECORDS'), async (req: StaffRequest, res: Response) => {
+  if (hydrationPromise) {
+    try {
+      await hydrationPromise;
+    } catch {
+      // Proceed with current in-memory db on hydration error
+    }
+  }
   const user = req.staffUser;
   const isAdmin = user?.role === 'Admin';
 

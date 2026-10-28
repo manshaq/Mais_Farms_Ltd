@@ -24,7 +24,7 @@ import {
 } from '../backup/backupService.ts';
 import { decryptAndDecompressBackup } from '../backup/cryptoVault.ts';
 import { activeSessions, normalizeRole, paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
-import { softDeleteUser, syncDatabaseToSupabase } from '../db/supabaseService.ts';
+import { insertTask, softDeleteUser, syncDatabaseToSupabase, updateTask } from '../db/supabaseService.ts';
 import { validateRequiredString } from '../validation/validators.ts';
 import { hashPassword, sanitizeUser } from './auth.routes.ts';
 
@@ -90,6 +90,9 @@ operationsRouter.post(
     };
     db.tasks.unshift(task);
     saveDatabase(db);
+    insertTask(task).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase task persistence warning:', err?.message || err);
+    });
     res.status(201).json({ task });
   }
 );
@@ -127,6 +130,13 @@ operationsRouter.patch(
     );
 
     saveDatabase(db);
+    updateTask(task.id, {
+      status: task.status,
+      completionNotes: task.completionNotes,
+      completedAt: task.completedAt,
+    }).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase task update warning:', err?.message || err);
+    });
     res.json({ task });
   }
 );

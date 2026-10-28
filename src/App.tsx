@@ -200,6 +200,10 @@ export default function App() {
         }
       }
     } catch (err: any) {
+      if (err.message?.includes('Authentication required') || err.message?.includes('401')) {
+        setIsAuthenticated(false);
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
       setBanner({
         type: 'error',
         message: err.message || 'Unable to connect to server.',
@@ -242,22 +246,26 @@ export default function App() {
   const apiCall = async (
     url: string,
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
-    body?: any,
-    overrideUserId?: string
+    body?: any
   ) => {
-    const activeUid = overrideUserId || currentUserId;
-    const bearer = overrideUserId ? overrideUserId : authToken || activeUid;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
     const res = await fetch(url, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${bearer}`,
-      },
+      headers,
       credentials: 'include',
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 401) {
+        setIsAuthenticated(false);
+        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
       throw new Error(data.error || `Request failed (${res.status})`);
     }
     await fetchBackendState();

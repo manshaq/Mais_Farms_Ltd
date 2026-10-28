@@ -17,7 +17,12 @@ import {
   generateExpenseTransactionCode,
   saveDatabase,
 } from '../db/store.ts';
-import { insertAnimal, insertWeightRecord } from '../db/supabaseService.ts';
+import {
+  insertAnimal,
+  insertBreedingEvent,
+  insertCalvingEvent,
+  insertWeightRecord,
+} from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
   validateNonNegativeNumber,
@@ -205,6 +210,9 @@ breedingRouter.post(
     );
 
     saveDatabase(db);
+    insertBreedingEvent(brd).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase breeding event persistence warning:', err?.message || err);
+    });
     res.status(201).json({ breedingEvent: brd });
   }
 );
@@ -392,6 +400,9 @@ breedingRouter.post(
     );
 
     saveDatabase(db);
+    insertCalvingEvent(calvingEvt).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase calving event persistence warning:', err?.message || err);
+    });
     res.status(201).json({ calvingEvent: calvingEvt, calfIds: createdCalfIds });
   }
 );

@@ -20,6 +20,13 @@ import {
   generateSupplierId,
   saveDatabase,
 } from '../db/store.ts';
+import {
+  insertFeedIssue,
+  insertFeedProduct,
+  insertFeedPurchase,
+  insertInventoryMovement,
+  insertSupplier,
+} from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
   validateNonNegativeNumber,
@@ -163,6 +170,9 @@ feedRouter.post(
       `Registered feed product "${created.name}" (${created.category}).`
     );
     saveDatabase(db);
+    insertFeedProduct(created).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase feed product persistence warning:', err?.message || err);
+    });
     res.status(201).json({ product: created });
   }
 );
@@ -354,6 +364,9 @@ feedRouter.post(
     );
 
     saveDatabase(db);
+    insertFeedPurchase(purchase).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase feed purchase persistence warning:', err?.message || err);
+    });
     res.status(201).json({ purchase, expense: exp, product });
   }
 );
@@ -554,6 +567,9 @@ feedRouter.post(
     );
 
     saveDatabase(db);
+    insertFeedIssue(newIssue).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase feed issue persistence warning:', err?.message || err);
+    });
     res.status(201).json({ issue: newIssue, allocations: shares, updatedStock });
   }
 );
@@ -602,6 +618,9 @@ feedRouter.post(
     );
 
     saveDatabase(db);
+    insertInventoryMovement(mov).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase inventory movement persistence warning:', err?.message || err);
+    });
     res.status(201).json({ movement: mov });
   }
 );

@@ -5,13 +5,25 @@
 import { supabaseClient } from './store.ts';
 import {
   Animal,
+  AnimalEvent,
   AnimalIdentifier,
-  StaffUser,
-  Expense,
   AttachmentRecord,
-  WeightRecord,
-  Payment,
+  BreedingEvent,
+  CalvingEvent,
+  Expense,
+  FarmTask,
+  FeedIssue,
+  FeedProduct,
+  FeedPurchase,
+  HealthEpisode,
+  InventoryMovement,
   MaisDatabaseState,
+  Payment,
+  StaffUser,
+  Supplier,
+  Treatment,
+  VaccinationRecord,
+  WeightRecord,
 } from '../../src/types/mais.ts';
 
 /**
@@ -348,6 +360,113 @@ export async function insertPayment(payment: Payment) {
   return true;
 }
 
+export async function insertHealthEpisode(episode: HealthEpisode) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('health_episodes').insert([mapHealthEpisodeToDb(episode)]);
+  if (error) console.warn('Supabase insertHealthEpisode warning:', error.message);
+  return true;
+}
+
+export async function insertTreatment(treatment: Treatment) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('treatments').insert([mapTreatmentToDb(treatment)]);
+  if (error) console.warn('Supabase insertTreatment warning:', error.message);
+  return true;
+}
+
+export async function insertVaccinationRecord(record: VaccinationRecord) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('vaccination_records').insert([mapVaccinationToDb(record)]);
+  if (error) console.warn('Supabase insertVaccinationRecord warning:', error.message);
+  return true;
+}
+
+export async function insertBreedingEvent(event: BreedingEvent) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('breeding_events').insert([mapBreedingEventToDb(event)]);
+  if (error) console.warn('Supabase insertBreedingEvent warning:', error.message);
+  return true;
+}
+
+export async function insertCalvingEvent(event: CalvingEvent) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('calving_events').insert([mapCalvingEventToDb(event)]);
+  if (error) console.warn('Supabase insertCalvingEvent warning:', error.message);
+  return true;
+}
+
+export async function insertFeedPurchase(purchase: FeedPurchase) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('feed_purchases').insert([mapFeedPurchaseToDb(purchase)]);
+  if (error) console.warn('Supabase insertFeedPurchase warning:', error.message);
+  return true;
+}
+
+export async function insertFeedIssue(issue: FeedIssue) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('feed_issues').insert([mapFeedIssueToDb(issue)]);
+  if (error) console.warn('Supabase insertFeedIssue warning:', error.message);
+  return true;
+}
+
+export async function insertInventoryMovement(movement: InventoryMovement) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('inventory_movements').insert([mapInventoryMovementToDb(movement)]);
+  if (error) console.warn('Supabase insertInventoryMovement warning:', error.message);
+  return true;
+}
+
+export async function insertTask(task: FarmTask) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('tasks').insert([mapTaskToDb(task)]);
+  if (error) console.warn('Supabase insertTask warning:', error.message);
+  return true;
+}
+
+export async function updateTask(taskId: string, updates: Partial<FarmTask>) {
+  if (!supabaseClient) return null;
+  const dbUpdates: Record<string, unknown> = {};
+  if (updates.status !== undefined) dbUpdates.status = updates.status;
+  if (updates.completionNotes !== undefined) dbUpdates.description = updates.completionNotes;
+  if (updates.completedAt !== undefined) dbUpdates.completed_at = updates.completedAt;
+  const { error } = await supabaseClient.from('tasks').update(dbUpdates).eq('id', taskId);
+  if (error) console.warn('Supabase updateTask warning:', error.message);
+  return true;
+}
+
+export async function insertSupplier(supplier: Supplier) {
+  if (!supabaseClient) return null;
+  const dbSupplier = {
+    id: supplier.id,
+    name: supplier.name,
+    category: supplier.category,
+    phone: supplier.phone || null,
+    email: supplier.email || null,
+    address: supplier.address || null,
+    notes: supplier.bankDetails || null,
+  };
+  const { error } = await supabaseClient.from('suppliers').upsert([dbSupplier], { onConflict: 'id' });
+  if (error) console.warn('Supabase insertSupplier warning:', error.message);
+  return true;
+}
+
+export async function insertFeedProduct(product: FeedProduct) {
+  if (!supabaseClient) return null;
+  const dbProduct = {
+    id: product.id,
+    name: product.name,
+    category: product.category,
+    unit: product.unit,
+    opening_stock: product.openingStock,
+    reorder_level: product.reorderLevel,
+    standard_unit_cost_ngn: product.standardUnitCostNgn,
+    storage_location: product.storageLocation,
+  };
+  const { error } = await supabaseClient.from('feed_products').upsert([dbProduct], { onConflict: 'id' });
+  if (error) console.warn('Supabase insertFeedProduct warning:', error.message);
+  return true;
+}
+
 /**
  * Synchronizes all records from local state into Supabase PostgreSQL tables.
  * Safe upsert that handles self-referencing foreign keys (dam_id).
@@ -567,10 +686,386 @@ export function mapDbToPayment(row: Record<string, any>): Payment {
   };
 }
 
+export function mapHealthEpisodeToDb(ep: HealthEpisode) {
+  return {
+    id: ep.id,
+    animal_id: ep.animalId,
+    reported_date: ep.reportedDate,
+    symptoms: ep.symptoms,
+    diagnosis: ep.diagnosis,
+    diagnosis_category: ep.diagnosisCategory,
+    severity: ep.severity,
+    status: ep.status,
+    veterinarian: ep.veterinarian,
+    outcome: ep.outcome || null,
+    notes: ep.notes || null,
+    recorded_by: ep.recordedBy,
+  };
+}
+
+export function mapDbToHealthEpisode(row: Record<string, any>): HealthEpisode {
+  return {
+    id: row.id,
+    animalId: row.animal_id,
+    reportedDate: row.reported_date,
+    symptoms: row.symptoms,
+    diagnosis: row.diagnosis,
+    diagnosisCategory: row.diagnosis_category,
+    severity: row.severity,
+    status: row.status,
+    veterinarian: row.veterinarian,
+    outcome: row.outcome || '',
+    notes: row.notes || '',
+    recordedBy: row.recorded_by,
+  };
+}
+
+export function mapTreatmentToDb(t: Treatment) {
+  return {
+    id: t.id,
+    episode_id: t.episodeId,
+    animal_id: t.animalId,
+    treatment_date: t.treatmentDate,
+    medicine: t.medicine,
+    active_ingredient: t.activeIngredient || null,
+    dosage: t.dosage,
+    route: t.route,
+    duration_days: t.durationDays,
+    withdrawal_milk_days: t.withdrawalMilkDays,
+    withdrawal_meat_days: t.withdrawalMeatDays,
+    administrator: t.administrator,
+    veterinarian: t.veterinarian,
+    medicine_cost: t.medicineCost,
+    consultation_cost: t.consultationCost,
+    other_cost: t.otherCost,
+    total_cost: t.totalCost,
+    follow_up_date: t.followUpDate || null,
+    outcome: t.outcome,
+    notes: t.notes || null,
+    expense_id: t.expenseId || null,
+  };
+}
+
+export function mapDbToTreatment(row: Record<string, any>): Treatment {
+  return {
+    id: row.id,
+    episodeId: row.episode_id,
+    animalId: row.animal_id,
+    treatmentDate: row.treatment_date,
+    medicine: row.medicine,
+    activeIngredient: row.active_ingredient || '',
+    dosage: row.dosage,
+    route: row.route,
+    durationDays: Number(row.duration_days) || 1,
+    withdrawalMilkDays: Number(row.withdrawal_milk_days) || 0,
+    withdrawalMeatDays: Number(row.withdrawal_meat_days) || 0,
+    administrator: row.administrator,
+    veterinarian: row.veterinarian,
+    medicineCost: Number(row.medicine_cost) || 0,
+    consultationCost: Number(row.consultation_cost) || 0,
+    otherCost: Number(row.other_cost) || 0,
+    totalCost: Number(row.total_cost) || 0,
+    followUpDate: row.follow_up_date || null,
+    outcome: row.outcome || 'Pending Follow-up',
+    notes: row.notes || '',
+    expenseId: row.expense_id || null,
+  };
+}
+
+export function mapVaccinationToDb(v: VaccinationRecord) {
+  return {
+    id: v.id,
+    animal_id: v.animalId,
+    date_administered: v.dateAdministered,
+    protocol_type: v.protocolType,
+    vaccine_or_product: v.vaccineOrProduct,
+    batch_number: v.batchNumber || null,
+    dosage: v.dosage,
+    next_due_date: v.nextDueDate,
+    veterinarian: v.veterinarian,
+    cost_ngn: v.costNgn,
+    withdrawal_days: v.withdrawalDays,
+    notes: v.notes || null,
+  };
+}
+
+export function mapDbToVaccination(row: Record<string, any>): VaccinationRecord {
+  return {
+    id: row.id,
+    animalId: row.animal_id,
+    dateAdministered: row.date_administered,
+    protocolType: row.protocol_type,
+    vaccineOrProduct: row.vaccine_or_product,
+    batchNumber: row.batch_number || '',
+    dosage: row.dosage,
+    nextDueDate: row.next_due_date,
+    veterinarian: row.veterinarian,
+    costNgn: Number(row.cost_ngn) || 0,
+    withdrawalDays: Number(row.withdrawal_days) || 0,
+    notes: row.notes || '',
+  };
+}
+
+export function mapDbToWeightRecord(row: Record<string, any>): WeightRecord {
+  return {
+    id: row.id,
+    animalId: row.animal_id,
+    measurementDate: row.measurement_date,
+    weightKg: Number(row.weight_kg),
+    bodyConditionScore: row.body_condition_score !== null && row.body_condition_score !== undefined ? Number(row.body_condition_score) : null,
+    stage: row.stage,
+    recordedBy: row.recorded_by,
+    notes: row.notes || '',
+  };
+}
+
+export function mapBreedingEventToDb(b: BreedingEvent) {
+  return {
+    id: b.id,
+    animal_id: b.animalId,
+    heat_date: b.heatDate,
+    insemination_date: b.inseminationDate,
+    attempt_number: b.attemptNumber,
+    sire_id_or_straw: b.sireIdOrStraw,
+    sire_breed: b.sireBreed,
+    batch_number: b.batchNumber || null,
+    technician: b.technician,
+    pregnancy_check_date: b.pregnancyCheckDate || null,
+    pregnancy_check_method: b.pregnancyCheckMethod,
+    pregnancy_result: b.pregnancyResult,
+    estimated_due_date: b.estimatedDueDate,
+    status: b.status,
+    cost_ngn: b.costNgn,
+    notes: b.notes || null,
+  };
+}
+
+export function mapDbToBreedingEvent(row: Record<string, any>): BreedingEvent {
+  return {
+    id: row.id,
+    animalId: row.animal_id,
+    heatDate: row.heat_date,
+    inseminationDate: row.insemination_date,
+    attemptNumber: Number(row.attempt_number) || 1,
+    sireIdOrStraw: row.sire_id_or_straw,
+    sireBreed: row.sire_breed,
+    batchNumber: row.batch_number || '',
+    technician: row.technician,
+    pregnancyCheckDate: row.pregnancy_check_date || null,
+    pregnancyCheckMethod: row.pregnancy_check_method || 'Pending',
+    pregnancyResult: row.pregnancy_result || 'Pending',
+    estimatedDueDate: row.estimated_due_date,
+    status: row.status,
+    costNgn: Number(row.cost_ngn) || 0,
+    notes: row.notes || '',
+  };
+}
+
+export function mapCalvingEventToDb(c: CalvingEvent) {
+  return {
+    id: c.id,
+    dam_id: c.damId,
+    breeding_event_id: c.breedingEventId || null,
+    calving_date: c.calvingDate,
+    outcome: c.outcome,
+    assistance_required: c.assistanceRequired,
+    calf_ids: c.calfIds || [],
+    calf_tags: c.calfTags || [],
+    veterinarian: c.veterinarian || null,
+    notes: c.notes || null,
+    recorded_by: c.recordedBy,
+  };
+}
+
+export function mapDbToCalvingEvent(row: Record<string, any>): CalvingEvent {
+  return {
+    id: row.id,
+    damId: row.dam_id,
+    breedingEventId: row.breeding_event_id || null,
+    calvingDate: row.calving_date,
+    outcome: row.outcome,
+    assistanceRequired: row.assistance_required || 'None',
+    calfIds: Array.isArray(row.calf_ids) ? row.calf_ids : [],
+    calfTags: Array.isArray(row.calf_tags) ? row.calf_tags : [],
+    veterinarian: row.veterinarian || '',
+    notes: row.notes || '',
+    recordedBy: row.recorded_by,
+  };
+}
+
+export function mapFeedPurchaseToDb(p: FeedPurchase) {
+  return {
+    id: p.id,
+    supplier_id: p.supplierId || null,
+    supplier_name: p.supplierName,
+    purchase_date: p.purchaseDate,
+    product_id: p.productId,
+    product_name: p.productName,
+    batch_number: p.batchNumber || null,
+    quantity_ordered: p.quantityOrdered,
+    quantity_received: p.quantityReceived,
+    unit_price_ngn: p.unitPriceNgn,
+    transport_cost_ngn: p.transportCostNgn,
+    total_cost_ngn: p.totalCostNgn,
+    invoice_number: p.invoiceNumber || null,
+    expense_id: p.expenseId || null,
+    recorded_by: p.recordedBy,
+  };
+}
+
+export function mapDbToFeedPurchase(row: Record<string, any>): FeedPurchase {
+  return {
+    id: row.id,
+    supplierId: row.supplier_id || '',
+    supplierName: row.supplier_name,
+    purchaseDate: row.purchase_date,
+    productId: row.product_id,
+    productName: row.product_name,
+    batchNumber: row.batch_number || '',
+    quantityOrdered: Number(row.quantity_ordered),
+    quantityReceived: Number(row.quantity_received),
+    unitPriceNgn: Number(row.unit_price_ngn),
+    transportCostNgn: Number(row.transport_cost_ngn) || 0,
+    totalCostNgn: Number(row.total_cost_ngn),
+    invoiceNumber: row.invoice_number || '',
+    expenseId: row.expense_id || null,
+    recordedBy: row.recorded_by,
+  };
+}
+
+export function mapFeedIssueToDb(f: FeedIssue) {
+  return {
+    id: f.id,
+    issue_date: f.issueDate,
+    product_id: f.productId,
+    product_name: f.productName,
+    quantity: f.quantity,
+    unit: f.unit,
+    target_type: f.targetType,
+    target_animal_id: f.targetAnimalId || null,
+    target_group: f.targetGroup || null,
+    allocation_method: f.allocationMethod,
+    wastage_kg: f.wastageKg,
+    unit_cost_ngn: f.unitCostNgn,
+    total_cost_ngn: f.totalCostNgn,
+    responsible_staff: f.responsibleStaff,
+    notes: f.notes || null,
+  };
+}
+
+export function mapDbToFeedIssue(row: Record<string, any>): FeedIssue {
+  return {
+    id: row.id,
+    issueDate: row.issue_date,
+    productId: row.product_id,
+    productName: row.product_name,
+    quantity: Number(row.quantity),
+    unit: row.unit,
+    targetType: row.target_type,
+    targetAnimalId: row.target_animal_id || null,
+    targetGroup: row.target_group || null,
+    allocationMethod: row.allocation_method,
+    wastageKg: Number(row.wastage_kg) || 0,
+    unitCostNgn: Number(row.unit_cost_ngn),
+    totalCostNgn: Number(row.total_cost_ngn),
+    responsibleStaff: row.responsible_staff,
+    notes: row.notes || '',
+  };
+}
+
+export function mapInventoryMovementToDb(m: InventoryMovement) {
+  return {
+    id: m.id,
+    product_id: m.productId,
+    movement_date: m.movementDate,
+    movement_type: m.movementType,
+    quantity: m.quantity,
+    reason: m.reason,
+    reference_id: m.referenceId || null,
+    recorded_by: m.recordedBy,
+  };
+}
+
+export function mapDbToInventoryMovement(row: Record<string, any>): InventoryMovement {
+  return {
+    id: row.id,
+    productId: row.product_id,
+    movementDate: row.movement_date,
+    movementType: row.movement_type,
+    quantity: Number(row.quantity),
+    reason: row.reason,
+    referenceId: row.reference_id || '',
+    recordedBy: row.recorded_by,
+  };
+}
+
+export function mapTaskToDb(t: FarmTask) {
+  return {
+    id: t.id,
+    title: t.title,
+    description: t.completionNotes || null,
+    category: t.category,
+    priority: t.priority,
+    status: t.status,
+    assigned_to_user_id: null,
+    assigned_to_name: t.assignedTo || null,
+    due_date: t.dueDate,
+    completed_at: t.completedAt || null,
+    related_entity_type: t.animalId ? 'Animal' : null,
+    related_entity_id: t.animalId || null,
+    created_by: t.assignedTo || 'System',
+  };
+}
+
+export function mapDbToTask(row: Record<string, any>): FarmTask {
+  return {
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    priority: row.priority,
+    dueDate: row.due_date,
+    assignedTo: row.assigned_to_name || 'Staff',
+    animalId: row.related_entity_type === 'Animal' ? row.related_entity_id : null,
+    animalTag: null,
+    referenceId: null,
+    status: row.status,
+    completionNotes: row.description || '',
+    completedAt: row.completed_at || null,
+  };
+}
+
+export function mapAnimalEventToDb(e: AnimalEvent) {
+  return {
+    id: e.id,
+    animal_id: e.animalId,
+    event_date: e.eventDate,
+    event_type: e.eventType,
+    title: e.title,
+    summary: e.summary,
+    reference_id: e.referenceId,
+    cost_ngn: e.costNgn,
+    recorded_by: e.recordedBy,
+  };
+}
+
+export function mapDbToAnimalEvent(row: Record<string, any>): AnimalEvent {
+  return {
+    id: row.id,
+    animalId: row.animal_id,
+    eventDate: row.event_date,
+    eventType: row.event_type,
+    title: row.title,
+    summary: row.summary,
+    referenceId: row.reference_id,
+    costNgn: row.cost_ngn !== null && row.cost_ngn !== undefined ? Number(row.cost_ngn) : null,
+    recordedBy: row.recorded_by,
+  };
+}
+
 /**
  * Hydrates the in-memory store from Supabase PostgreSQL tables (C3).
  * Solves Vercel serverless cold-start data persistence by making PostgreSQL
- * the single source of truth.
+ * the single source of truth across all operational tables.
  */
 export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): Promise<boolean> {
   if (!supabaseClient) return false;
@@ -584,6 +1079,17 @@ export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): 
       paymentsRes,
       suppliersRes,
       productsRes,
+      healthRes,
+      treatmentsRes,
+      vaccinationsRes,
+      weightsRes,
+      breedingRes,
+      calvingRes,
+      purchasesRes,
+      issuesRes,
+      movementsRes,
+      tasksRes,
+      eventsRes,
     ] = await Promise.all([
       supabaseClient.from('users').select('*'),
       supabaseClient.from('animals').select('*'),
@@ -592,10 +1098,26 @@ export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): 
       supabaseClient.from('payments').select('*'),
       supabaseClient.from('suppliers').select('*'),
       supabaseClient.from('feed_products').select('*'),
+      supabaseClient.from('health_episodes').select('*'),
+      supabaseClient.from('treatments').select('*'),
+      supabaseClient.from('vaccination_records').select('*'),
+      supabaseClient.from('weight_records').select('*'),
+      supabaseClient.from('breeding_events').select('*'),
+      supabaseClient.from('calving_events').select('*'),
+      supabaseClient.from('feed_purchases').select('*'),
+      supabaseClient.from('feed_issues').select('*'),
+      supabaseClient.from('inventory_movements').select('*'),
+      supabaseClient.from('tasks').select('*'),
+      supabaseClient.from('animal_events').select('*'),
     ]);
 
     if (usersRes.data && usersRes.data.length > 0) {
-      targetDb.users = usersRes.data.map(mapDbToUser);
+      const existingPasswords = new Map(targetDb.users.map((u) => [u.id, u.password]));
+      targetDb.users = usersRes.data.map((row) => {
+        const u = mapDbToUser(row);
+        u.password = existingPasswords.get(u.id);
+        return u;
+      });
     }
     if (animalsRes.data && animalsRes.data.length > 0) {
       targetDb.animals = animalsRes.data.map(mapDbToAnimal);
@@ -631,6 +1153,39 @@ export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): 
         standardUnitCostNgn: Number(p.standard_unit_cost_ngn),
         storageLocation: p.storage_location,
       }));
+    }
+    if (healthRes.data && healthRes.data.length > 0) {
+      targetDb.healthEpisodes = healthRes.data.map(mapDbToHealthEpisode);
+    }
+    if (treatmentsRes.data && treatmentsRes.data.length > 0) {
+      targetDb.treatments = treatmentsRes.data.map(mapDbToTreatment);
+    }
+    if (vaccinationsRes.data && vaccinationsRes.data.length > 0) {
+      targetDb.vaccinations = vaccinationsRes.data.map(mapDbToVaccination);
+    }
+    if (weightsRes.data && weightsRes.data.length > 0) {
+      targetDb.weightRecords = weightsRes.data.map(mapDbToWeightRecord);
+    }
+    if (breedingRes.data && breedingRes.data.length > 0) {
+      targetDb.breedingEvents = breedingRes.data.map(mapDbToBreedingEvent);
+    }
+    if (calvingRes.data && calvingRes.data.length > 0) {
+      targetDb.calvingEvents = calvingRes.data.map(mapDbToCalvingEvent);
+    }
+    if (purchasesRes.data && purchasesRes.data.length > 0) {
+      targetDb.feedPurchases = purchasesRes.data.map(mapDbToFeedPurchase);
+    }
+    if (issuesRes.data && issuesRes.data.length > 0) {
+      targetDb.feedIssues = issuesRes.data.map(mapDbToFeedIssue);
+    }
+    if (movementsRes.data && movementsRes.data.length > 0) {
+      targetDb.inventoryMovements = movementsRes.data.map(mapDbToInventoryMovement);
+    }
+    if (tasksRes.data && tasksRes.data.length > 0) {
+      targetDb.tasks = tasksRes.data.map(mapDbToTask);
+    }
+    if (eventsRes.data && eventsRes.data.length > 0) {
+      targetDb.animalEvents = eventsRes.data.map(mapDbToAnimalEvent);
     }
 
     return true;

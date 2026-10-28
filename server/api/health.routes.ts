@@ -13,6 +13,13 @@ import {
   generateExpenseTransactionCode,
   saveDatabase,
 } from '../db/store.ts';
+import {
+  insertExpense,
+  insertHealthEpisode,
+  insertPayment,
+  insertTreatment,
+  insertVaccinationRecord,
+} from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
   validateNonNegativeNumber,
@@ -154,6 +161,9 @@ healthRouter.post(
     );
 
     saveDatabase(db);
+    insertHealthEpisode(episode).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase health episode persistence warning:', err?.message || err);
+    });
     res.status(201).json({ episode });
   }
 );
@@ -357,6 +367,9 @@ healthRouter.post(
     );
 
     saveDatabase(db);
+    insertTreatment(treatment).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase treatment persistence warning:', err?.message || err);
+    });
     res.status(201).json({ treatment, expenseId });
   }
 );
@@ -496,6 +509,9 @@ healthRouter.post(
     );
 
     saveDatabase(db);
+    insertVaccinationRecord(vac).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase vaccination persistence warning:', err?.message || err);
+    });
     res.status(201).json({ vaccination: vac });
   }
 );
