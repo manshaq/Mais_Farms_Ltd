@@ -1,0 +1,63 @@
+import { MaisDatabaseState } from '../types/mais.ts';
+
+const nowFormatted = new Date().toISOString().slice(0, 16).replace('T', ' ');
+
+export const INITIAL_MAIS_DB: MaisDatabaseState = {
+  users: [
+    {
+      id: 'USR-01',
+      fullName: 'Bello Aliyu',
+      email: 'belloaliyu808@gmail.com',
+      role: 'Admin',
+      title: 'Administrator',
+      canApproveExpenses: true,
+      status: 'Active',
+      lastActive: nowFormatted,
+    },
+  ],
+  suppliers: [],
+  animals: [],
+  animalIdentifiers: [],
+  healthEpisodes: [],
+  treatments: [],
+  vaccinations: [],
+  weightRecords: [],
+  breedingEvents: [],
+  calvingEvents: [],
+  feedProducts: [],
+  feedPurchases: [],
+  inventoryMovements: [],
+  feedIssues: [],
+  expenses: [],
+  expenseAllocations: [],
+  payments: [],
+  tasks: [],
+  attachments: [],
+  animalEvents: [],
+  auditLogs: [],
+  emailLogs: [],
+  notificationSettings: {
+    autoMonthlyReportEnabled: true,
+    monthlyReportDayOfMonth: 1,
+    autoDailyReminderEnabled: true,
+    reminderLeadDays: 1,
+    additionalRecipientEmails: '',
+    lastMonthlyReportSentMonth: null,
+    lastDailyReminderRunDate: null,
+  },
+  backupSettings: {
+    autoBackupEnabled: true,
+    scheduleHourUtc: 2,
+    dailyRetentionDays: 30,
+    monthlyRetentionMonths: 12,
+    maxRetryAttempts: 3,
+    immutableObjectLock: true,
+    objectLockDays: 30,
+    alertAdminOnFailure: true,
+    alertRecipientEmail: 'belloaliyu808@gmail.com',
+    lastDailyBackupDate: null,
+    lastMonthlyBackupMonth: null,
+  },
+  backupRuns: [],
+};
+

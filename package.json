@@ -1,0 +1,52 @@
+{
+  "name": "mais-ltd-livestock-management-system",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "start": "tsx server.ts",
+    "build": "vite build",
+    "preview": "vite preview",
+    "clean": "rm -rf dist server.js",
+    "lint": "tsc --noEmit",
+    "type-check": "tsc --noEmit",
+    "test": "npm run test:domain && npm run test:crypto && npm run test:api && npm run test:storage",
+    "test:domain": "tsx --test tests/unit/farmRules.test.ts",
+    "test:crypto": "tsx --test tests/unit/cryptoVault.test.ts",
+    "test:api": "tsx --test tests/api/apiRoutes.test.ts",
+    "test:storage": "tsx --test tests/unit/storageAndMigrations.test.ts",
+    "backup:run": "tsx server/backup/backupCli.ts run",
+    "backup:verify": "tsx server/backup/backupCli.ts verify",
+    "backup:prune": "tsx server/backup/backupCli.ts prune",
+    "backup:status": "tsx server/backup/backupCli.ts status",
+    "db:status": "tsx server/db/migrationRunner.ts status",
+    "db:dump": "tsx server/db/migrationRunner.ts dump",
+    "db:migrate": "tsx server/db/migrationRunner.ts migrate",
+    "supabase:link": "supabase link",
+    "supabase:push": "supabase db push",
+    "supabase:status": "supabase migration list"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "lucide-react": "^0.546.0",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "vite": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "autoprefixer": "^10.4.21",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  }
+}
