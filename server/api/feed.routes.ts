@@ -21,11 +21,16 @@ import {
   saveDatabase,
 } from '../db/store.ts';
 import {
+  insertExpense,
+  insertExpenseAllocation,
   insertFeedIssue,
   insertFeedProduct,
   insertFeedPurchase,
   insertInventoryMovement,
+  insertPayment,
   insertSupplier,
+  insertTask,
+  updateFeedProduct,
 } from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
@@ -36,7 +41,12 @@ import {
 
 export const feedRouter = Router();
 
-function resolveOrCreateFeedProduct(body: any): FeedProduct | null {
+/**
+ * Returns the resolved/created product alongside its pending Supabase
+ * persistence promise (already-resolved for an existing product), so a
+ * caller whose own insert carries an FK on this product can wait for it.
+ */
+function resolveOrCreateFeedProduct(body: any): { product: FeedProduct | null; ready: Promise<unknown> } {
   const {
     productId,
     newProductName,
@@ -48,19 +58,19 @@ function resolveOrCreateFeedProduct(body: any): FeedProduct | null {
 
   if (productId && productId !== '__NEW__') {
     const existing = db.feedProducts.find((p) => p.id === productId);
-    if (existing) return existing;
+    if (existing) return { product: existing, ready: Promise.resolve() };
   }
 
   const trimmedName = String(newProductName || '').trim();
   if (!trimmedName) {
-    return null;
+    return { product: null, ready: Promise.resolve() };
   }
 
   // Check if a product with the same name already exists
   const byName = db.feedProducts.find(
     (p) => p.name.toLowerCase() === trimmedName.toLowerCase()
   );
-  if (byName) return byName;
+  if (byName) return { product: byName, ready: Promise.resolve() };
 
   const created: FeedProduct = {
     id: `FD-${String(db.feedProducts.length + 1).padStart(2, '0')}-${Date.now().toString().slice(-3)}`,
@@ -74,10 +84,10 @@ function resolveOrCreateFeedProduct(body: any): FeedProduct | null {
   };
 
   db.feedProducts.push(created);
-  insertFeedProduct(created).catch((err) => {
+  const ready = insertFeedProduct(created).catch((err) => {
     console.warn('⚠️ [MAIS DB] Supabase feed product persistence warning:', err?.message || err);
   });
-  return created;
+  return { product: created, ready };
 }
 
 /**
@@ -233,7 +243,7 @@ feedRouter.post(
       paymentStatus,
     } = req.body;
 
-    const product = resolveOrCreateFeedProduct(req.body);
+    const { product, ready: productReady } = resolveOrCreateFeedProduct(req.body);
     if (!product) {
       res.status(400).json({
         error: 'Please select an existing feed product or enter a new feed product name.',
@@ -267,6 +277,9 @@ feedRouter.post(
     let resolvedSupplier = db.suppliers.find(
       (s) => s.id === supplierId || s.name.toLowerCase() === cleanSupplierName.toLowerCase()
     );
+    // Purchase/movement/expense below carry FKs on product_id/supplier_id, so
+    // they must wait for a freshly-created product or supplier instead of racing it.
+    let supplierReady: Promise<unknown> = Promise.resolve();
     if (!resolvedSupplier && cleanSupplierName) {
       resolvedSupplier = {
         id: generateSupplierId(db.suppliers),
@@ -278,10 +291,11 @@ feedRouter.post(
         bankDetails: '',
       };
       db.suppliers.push(resolvedSupplier);
-      insertSupplier(resolvedSupplier).catch((err) => {
+      supplierReady = insertSupplier(resolvedSupplier).catch((err) => {
         console.warn('⚠️ [MAIS DB] Supabase supplier persistence warning:', err?.message || err);
       });
     }
+    const prereqsReady = Promise.all([productReady, supplierReady]);
 
     const qtyRec = Number(quantityReceived);
     const transport = Number(transportCostNgn || 0);
@@ -345,19 +359,35 @@ feedRouter.post(
 
     db.feedPurchases.unshift(purchase);
     db.inventoryMovements.unshift(mov);
+    prereqsReady
+      .then(() => insertInventoryMovement(mov))
+      .catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase inventory movement persistence warning:', err?.message || err);
+      });
     db.expenses.unshift(exp);
+    const expenseReady = prereqsReady
+      .then(() => insertExpense(exp))
+      .catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase expense persistence warning:', err?.message || err);
+      });
 
     if (exp.paymentStatus === 'Paid') {
-      db.payments.push({
+      const purchasePayment = {
         id: `PAY-${Date.now()}`,
         expenseId,
         paymentDate: dateStr,
         amountNgn: totalCostNgn,
-        paymentMethod: 'Bank Transfer',
+        paymentMethod: 'Bank Transfer' as const,
         referenceNumber: `NIP-${purchase.invoiceNumber}`,
         recordedBy: user.fullName,
         notes: 'Feed purchase payment',
-      });
+      };
+      db.payments.push(purchasePayment);
+      expenseReady
+        .then(() => insertPayment(purchasePayment))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase payment persistence warning:', err?.message || err);
+        });
     }
 
     appendAudit(
@@ -370,9 +400,16 @@ feedRouter.post(
     );
 
     saveDatabase(db);
-    insertFeedPurchase(purchase).catch((err) => {
-      console.warn('⚠️ [MAIS DB] Supabase feed purchase persistence warning:', err?.message || err);
-    });
+    prereqsReady
+      .then(() => insertFeedPurchase(purchase))
+      .catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase feed purchase persistence warning:', err?.message || err);
+      });
+    productReady
+      .then(() => updateFeedProduct(product.id, { standardUnitCostNgn: product.standardUnitCostNgn }))
+      .catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase feed product update warning:', err?.message || err);
+      });
     res.status(201).json({ purchase, expense: exp, product });
   }
 );
@@ -472,7 +509,12 @@ feedRouter.post(
     };
 
     db.feedIssues.unshift(newIssue);
-    db.inventoryMovements.unshift({
+    // Allocations below carry an FK on feed_issue_id, so they must wait for
+    // this issue's Supabase write instead of racing it.
+    const feedIssueReady = insertFeedIssue(newIssue).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase feed issue persistence warning:', err?.message || err);
+    });
+    const issueMov: InventoryMovement = {
       id: `MOV-${Date.now()}`,
       productId: product.id,
       movementDate: dateStr,
@@ -484,6 +526,10 @@ feedRouter.post(
           : `Issued to group ${targetGroup}`,
       referenceId: issueId,
       recordedBy: user.fullName,
+    };
+    db.inventoryMovements.unshift(issueMov);
+    insertInventoryMovement(issueMov).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase inventory movement persistence warning:', err?.message || err);
     });
 
     const latestWeights = Object.fromEntries(
@@ -520,6 +566,11 @@ feedRouter.post(
         notes: `${Math.round(share.shareRatio * 100)}% (${share.allocatedQuantityKg} kg) of ${qty} kg ${product.name} via ${share.methodLabel}`,
       };
       db.expenseAllocations.unshift(alloc);
+      feedIssueReady
+        .then(() => insertExpenseAllocation(alloc))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase expense allocation persistence warning:', err?.message || err);
+        });
 
       appendAnimalEvent(
         share.animalId,
@@ -544,19 +595,23 @@ feedRouter.post(
         (t) => t.referenceId === product.id && t.status !== 'Completed'
       );
       if (!existingTask) {
-        db.tasks.unshift({
+        const lowStockTask = {
           id: `TSK-${Date.now()}`,
           title: `Low Stock Alert: Restock ${product.name} (${updatedStock.closingStock} kg remaining)`,
-          category: 'Low Feed Stock',
+          category: 'Low Feed Stock' as const,
           dueDate: dateStr,
-          priority: 'High',
+          priority: 'High' as const,
           assignedTo: user.fullName,
           animalId: null,
           animalTag: null,
           referenceId: product.id,
-          status: 'Pending',
+          status: 'Pending' as const,
           completionNotes: '',
           completedAt: null,
+        };
+        db.tasks.unshift(lowStockTask);
+        insertTask(lowStockTask).catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase task persistence warning:', err?.message || err);
         });
       }
     }
@@ -573,9 +628,6 @@ feedRouter.post(
     );
 
     saveDatabase(db);
-    insertFeedIssue(newIssue).catch((err) => {
-      console.warn('⚠️ [MAIS DB] Supabase feed issue persistence warning:', err?.message || err);
-    });
     res.status(201).json({ issue: newIssue, allocations: shares, updatedStock });
   }
 );

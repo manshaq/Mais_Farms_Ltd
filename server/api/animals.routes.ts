@@ -412,8 +412,11 @@ animalsRouter.post(
         notes: 'Acquisition payment',
       };
       db.payments.push(acqPayment);
-      insertExpense(exp).catch((e) => console.warn('Supabase acquisition expense sync warning:', e));
-      insertPayment(acqPayment).catch((e) => console.warn('Supabase acquisition payment sync warning:', e));
+      // Payment has an FK on expense_id, so it must not reach Supabase before the expense does.
+      insertExpense(exp)
+        .catch((e) => console.warn('Supabase acquisition expense sync warning:', e))
+        .then(() => insertPayment(acqPayment))
+        .catch((e) => console.warn('Supabase acquisition payment sync warning:', e));
     }
 
     appendAudit(
@@ -844,35 +847,6 @@ animalsRouter.post(
       `${fileName}|${resolvedEntityType}|${resolvedEntityId}|${sizeKb}|${contentBase64 || dateStr}`
     );
 
-    let storageBucket: string | undefined = undefined;
-    let storagePath: string | undefined = undefined;
-
-    if (supabaseClient && contentBase64) {
-      try {
-        const bucket = resolvedEntityType === 'Expense' ? 'receipt-documents' : 'animal-photos';
-        const safeFileName = String(fileName).replace(/[^a-zA-Z0-9._-]/g, '_');
-        const filePath = `${resolvedEntityType.toLowerCase()}s/${resolvedEntityId}/${Date.now()}_${safeFileName}`;
-        const base64Data = String(contentBase64).replace(/^data:.*?;base64,/, '');
-        const fileBuffer = Buffer.from(base64Data, 'base64');
-
-        const { error: uploadErr } = await supabaseClient.storage
-          .from(bucket)
-          .upload(filePath, fileBuffer, {
-            contentType: mimeType ? String(mimeType) : 'application/octet-stream',
-            upsert: true,
-          });
-
-        if (!uploadErr) {
-          storageBucket = bucket;
-          storagePath = filePath;
-        } else {
-          console.warn('Supabase storage upload error:', uploadErr.message);
-        }
-      } catch (err) {
-        console.warn('Supabase storage upload exception:', err);
-      }
-    }
-
     const att: AttachmentRecord = {
       id: `ATT-${Date.now()}`,
       animalId: linkedAnimalId,
@@ -887,9 +861,17 @@ animalsRouter.post(
       notes: String(notes || '').trim(),
       sha256Hash,
       mimeType: mimeType ? String(mimeType) : undefined,
-      storageBucket,
-      storagePath,
     };
+
+    try {
+      const uploaded = await uploadAttachment(att, contentBase64);
+      if (uploaded) {
+        att.storageBucket = uploaded.storageBucket;
+        att.storagePath = uploaded.storagePath;
+      }
+    } catch (err) {
+      console.warn('Supabase attachment persistence warning:', err);
+    }
     db.attachments.unshift(att);
 
     if (linkedAnimalId) {

@@ -3,6 +3,7 @@ import {
   Expense,
   ExpenseAllocation,
   HealthEpisode,
+  Supplier,
   Treatment,
   VaccinationRecord,
 } from '../../src/types/mais.ts';
@@ -11,14 +12,19 @@ import {
   appendAudit,
   db,
   generateExpenseTransactionCode,
+  generateSupplierId,
   saveDatabase,
 } from '../db/store.ts';
 import {
   insertExpense,
+  insertExpenseAllocation,
   insertHealthEpisode,
   insertPayment,
+  insertSupplier,
+  insertTask,
   insertTreatment,
   insertVaccinationRecord,
+  updateHealthEpisode,
 } from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
@@ -27,6 +33,35 @@ import {
 } from '../validation/validators.ts';
 
 export const healthRouter = Router();
+
+/**
+ * Resolves an existing supplier by name (case-insensitive) or creates a new
+ * one, persisting it to Supabase. Avoids hardcoding a supplier id that may
+ * not exist in a given deployment's `suppliers` table. Returns the pending
+ * persistence promise alongside the supplier so callers whose own inserts
+ * carry an FK on this supplier can wait for it instead of racing it.
+ */
+function resolveOrCreateVetSupplier(name: string): { supplier: Supplier; ready: Promise<unknown> } {
+  const cleanName = String(name || 'Veterinary & Pharma Supplier').trim();
+  let supplier = db.suppliers.find((s) => s.name.toLowerCase() === cleanName.toLowerCase());
+  let ready: Promise<unknown> = Promise.resolve();
+  if (!supplier) {
+    supplier = {
+      id: generateSupplierId(db.suppliers),
+      name: cleanName,
+      category: 'Veterinary & Pharma',
+      phone: '',
+      email: '',
+      address: 'Recorded via Health/Treatment Record',
+      bankDetails: '',
+    };
+    db.suppliers.push(supplier);
+    ready = insertSupplier(supplier).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase supplier persistence warning:', err?.message || err);
+    });
+  }
+  return { supplier, ready };
+}
 
 /**
  * GET /api/health-episodes
@@ -134,20 +169,24 @@ healthRouter.post(
       episode.severity === 'Critical' ||
       episode.status === 'Open'
     ) {
-      db.tasks.unshift({
+      const reviewTask = {
         id: `TSK-${Date.now()}`,
         title: `Veterinary Review: ${episode.diagnosis} (${animal.currentTag})`,
-        category: 'Open Health Case',
+        category: 'Open Health Case' as const,
         dueDate: dateStr,
         priority:
-          episode.severity === 'Critical' || episode.severity === 'High' ? 'High' : 'Medium',
+          episode.severity === 'Critical' || episode.severity === 'High' ? 'High' as const : 'Medium' as const,
         assignedTo: episode.veterinarian,
         animalId: animal.id,
         animalTag: animal.currentTag,
         referenceId: episode.id,
-        status: 'Pending',
+        status: 'Pending' as const,
         completionNotes: '',
         completedAt: null,
+      };
+      db.tasks.unshift(reviewTask);
+      insertTask(reviewTask).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase task persistence warning:', err?.message || err);
       });
     }
 
@@ -242,6 +281,9 @@ healthRouter.post(
 
     if (totalCost > 0) {
       expenseId = `EXP-${Date.now()}`;
+      const { supplier: vetSupplier, ready: supplierReady } = resolveOrCreateVetSupplier(
+        supplierName || 'Arewa Veterinary Pharma & Diagnostics'
+      );
       const newExp: Expense = {
         id: expenseId,
         transactionCode: generateExpenseTransactionCode(db.expenses),
@@ -249,8 +291,8 @@ healthRouter.post(
         amountNgn: totalCost,
         category: 'Veterinary & Treatment',
         description: `Treatment (${medicine}) for ${animal.currentTag} — Episode: ${episode.diagnosis}`,
-        supplierId: 'SUP-02',
-        supplierName: supplierName || 'Arewa Veterinary Pharma & Diagnostics',
+        supplierId: vetSupplier.id,
+        supplierName: vetSupplier.name,
         paymentStatus: paymentStatus || 'Paid',
         paymentMethod: 'Bank Transfer',
         invoiceNumber: `VET-${treatmentId.slice(-5)}`,
@@ -264,6 +306,14 @@ healthRouter.post(
         reversalReason: null,
       };
       db.expenses.unshift(newExp);
+      // Expense has an FK on supplier_id; allocation/payment below have an FK on
+      // expense_id — each must wait for its prerequisite's Supabase write.
+      const expenseReady = supplierReady
+        .catch(() => {})
+        .then(() => insertExpense(newExp))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase expense persistence warning:', err?.message || err);
+        });
 
       const newAlloc: ExpenseAllocation = {
         id: `ALC-${Date.now()}`,
@@ -277,18 +327,29 @@ healthRouter.post(
         notes: `Direct treatment cost (${medicine}) for ${animal.currentTag}`,
       };
       db.expenseAllocations.unshift(newAlloc);
+      expenseReady
+        .then(() => insertExpenseAllocation(newAlloc))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase expense allocation persistence warning:', err?.message || err);
+        });
 
       if (newExp.paymentStatus === 'Paid') {
-        db.payments.push({
+        const payment = {
           id: `PAY-${Date.now()}`,
           expenseId,
           paymentDate: dateStr,
           amountNgn: totalCost,
-          paymentMethod: 'Bank Transfer',
+          paymentMethod: 'Bank Transfer' as const,
           referenceNumber: `NIP-${treatmentId.slice(-5)}`,
           recordedBy: user.fullName,
           notes: 'Treatment settlement',
-        });
+        };
+        db.payments.push(payment);
+        expenseReady
+          .then(() => insertPayment(payment))
+          .catch((err) => {
+            console.warn('⚠️ [MAIS DB] Supabase payment persistence warning:', err?.message || err);
+          });
       }
     }
 
@@ -324,6 +385,9 @@ healthRouter.post(
     } else {
       episode.status = 'Under Treatment';
     }
+    updateHealthEpisode(episode.id, { status: episode.status, outcome: episode.outcome }).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase health episode update warning:', err?.message || err);
+    });
 
     appendAnimalEvent(
       animal.id,
@@ -338,22 +402,26 @@ healthRouter.post(
 
     if (treatment.followUpDate) {
       const today = new Date().toISOString().slice(0, 10);
-      db.tasks.unshift({
+      const followUpTask = {
         id: `TSK-${Date.now()}`,
         title: `Treatment Follow-up (${treatment.medicine}) for ${animal.currentTag}`,
-        category: 'Treatment Follow-up',
+        category: 'Treatment Follow-up' as const,
         dueDate: treatment.followUpDate,
-        priority: 'High',
+        priority: 'High' as const,
         assignedTo: treatment.veterinarian,
         animalId: animal.id,
         animalTag: animal.currentTag,
         referenceId: treatment.id,
         status:
           treatment.followUpDate < today && treatment.outcome === 'Pending Follow-up'
-            ? 'Overdue'
-            : 'Pending',
+            ? ('Overdue' as const)
+            : ('Pending' as const),
         completionNotes: '',
         completedAt: null,
+      };
+      db.tasks.unshift(followUpTask);
+      insertTask(followUpTask).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase task persistence warning:', err?.message || err);
       });
     }
 
@@ -429,7 +497,7 @@ healthRouter.post(
 
     if (cost > 0) {
       const expId = `EXP-${Date.now()}`;
-      db.expenses.unshift({
+      const vacExpense: Expense = {
         id: expId,
         transactionCode: generateExpenseTransactionCode(db.expenses),
         expenseDate: dateStr,
@@ -449,8 +517,15 @@ healthRouter.post(
         approvedBy: user.fullName,
         isReversed: false,
         reversalReason: null,
+      };
+      db.expenses.unshift(vacExpense);
+      // Allocation/payment below have an FK on expense_id, so each must wait
+      // for the expense's Supabase write instead of racing it.
+      const vacExpenseReady = insertExpense(vacExpense).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase expense persistence warning:', err?.message || err);
       });
-      db.expenseAllocations.unshift({
+
+      const vacAlloc: ExpenseAllocation = {
         id: `ALC-${Date.now()}`,
         expenseId: expId,
         feedIssueId: null,
@@ -460,17 +535,30 @@ healthRouter.post(
         allocationMethod: 'Direct 100%',
         amountNgn: cost,
         notes: `${vac.protocolType} (${vac.vaccineOrProduct}) for ${animal.currentTag}`,
-      });
-      db.payments.push({
+      };
+      db.expenseAllocations.unshift(vacAlloc);
+      vacExpenseReady
+        .then(() => insertExpenseAllocation(vacAlloc))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase expense allocation persistence warning:', err?.message || err);
+        });
+
+      const vacPayment = {
         id: `PAY-${Date.now()}`,
         expenseId: expId,
         paymentDate: dateStr,
         amountNgn: cost,
-        paymentMethod: 'Bank Transfer',
+        paymentMethod: 'Bank Transfer' as const,
         referenceNumber: `VAC-${vac.id.slice(-5)}`,
         recordedBy: user.fullName,
         notes: 'Vaccination settlement',
-      });
+      };
+      db.payments.push(vacPayment);
+      vacExpenseReady
+        .then(() => insertPayment(vacPayment))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase payment persistence warning:', err?.message || err);
+        });
     }
 
     appendAnimalEvent(
@@ -484,19 +572,23 @@ healthRouter.post(
       user.fullName
     );
 
-    db.tasks.unshift({
+    const protocolTask = {
       id: `TSK-${Date.now()}`,
       title: `Scheduled ${vac.protocolType}: ${vac.vaccineOrProduct} (${animal.currentTag})`,
-      category: 'Vaccination / Protocol',
+      category: 'Vaccination / Protocol' as const,
       dueDate: vac.nextDueDate,
-      priority: 'Medium',
+      priority: 'Medium' as const,
       assignedTo: vac.veterinarian,
       animalId: animal.id,
       animalTag: animal.currentTag,
       referenceId: vac.id,
-      status: 'Pending',
+      status: 'Pending' as const,
       completionNotes: '',
       completedAt: null,
+    };
+    db.tasks.unshift(protocolTask);
+    insertTask(protocolTask).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase task persistence warning:', err?.message || err);
     });
 
     appendAudit(
@@ -558,6 +650,10 @@ healthRouter.post(
       return;
     }
 
+    // Treatment below has an FK on episode_id; when a new episode is created
+    // in this same request, the treatment insert must wait for it.
+    let episodeReady: Promise<unknown> = Promise.resolve();
+
     if (!episode) {
       const dateStr = req.body.treatmentDate || new Date().toISOString().slice(0, 10);
       episode = {
@@ -575,6 +671,9 @@ healthRouter.post(
         recordedBy: user.fullName,
       };
       db.healthEpisodes.unshift(episode);
+      episodeReady = insertHealthEpisode(episode).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase health episode persistence warning:', err?.message || err);
+      });
     }
 
     const dateStr = req.body.treatmentDate || new Date().toISOString().slice(0, 10);
@@ -626,6 +725,11 @@ healthRouter.post(
       `Recorded treatment "${treatment.medicine}" for ${animal.currentTag}.`
     );
     saveDatabase(db);
+    episodeReady
+      .then(() => insertTreatment(treatment))
+      .catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase treatment persistence warning:', err?.message || err);
+      });
     res.status(201).json({ treatment, episode });
   }
 );
@@ -703,6 +807,9 @@ healthRouter.post(
       `Recorded ${vac.protocolType} "${vac.vaccineOrProduct}" for ${animal.currentTag}.`
     );
     saveDatabase(db);
+    insertVaccinationRecord(vac).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase vaccination persistence warning:', err?.message || err);
+    });
     res.status(201).json({ vaccination: vac });
   }
 );

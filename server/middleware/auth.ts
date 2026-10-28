@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { canPerformAction, PermissionAction } from '../../src/domain/farmRules.ts';
 import { StaffRole, StaffUser } from '../../src/types/mais.ts';
 import { db, generateStaffUserId, saveDatabase, supabaseClient } from '../db/store.ts';
+import { upsertStaffUserCore } from '../db/supabaseService.ts';
 
 export interface StaffRequest extends Request {
   staffUser?: StaffUser;
@@ -160,6 +161,9 @@ export async function resolveAndSyncSupabaseUser(supaUser: {
     };
     db.users.push(localUser);
     saveDatabase(db);
+    upsertStaffUserCore(localUser).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase staff user persistence warning:', err?.message || err);
+    });
   } else {
     localUser.supabaseUserId = supaUser.id;
     localUser.role = resolvedRole;

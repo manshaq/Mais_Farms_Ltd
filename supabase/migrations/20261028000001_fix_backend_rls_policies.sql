@@ -128,18 +128,26 @@ DROP POLICY IF EXISTS "Allow backend access to attachments" ON public.attachment
 CREATE POLICY "Allow backend access to attachments" ON public.attachments
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- 8. Backups
-ALTER TABLE IF EXISTS public.backup_settings ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Only Admins can view or manage backup_settings" ON public.backup_settings;
-DROP POLICY IF EXISTS "Allow backend access to backup_settings" ON public.backup_settings;
-CREATE POLICY "Allow backend access to backup_settings" ON public.backup_settings
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
+-- 8. Backups (tables are created later by migration 20261028000002; guard on
+--    existence so this migration doesn't fail when run first/standalone)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'backup_settings') THEN
+    ALTER TABLE public.backup_settings ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS "Only Admins can view or manage backup_settings" ON public.backup_settings;
+    DROP POLICY IF EXISTS "Allow backend access to backup_settings" ON public.backup_settings;
+    CREATE POLICY "Allow backend access to backup_settings" ON public.backup_settings
+      FOR ALL TO service_role USING (true) WITH CHECK (true);
+  END IF;
 
-ALTER TABLE IF EXISTS public.backup_runs ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Only Admins can view or manage backup_runs" ON public.backup_runs;
-DROP POLICY IF EXISTS "Allow backend access to backup_runs" ON public.backup_runs;
-CREATE POLICY "Allow backend access to backup_runs" ON public.backup_runs
-  FOR ALL TO service_role USING (true) WITH CHECK (true);
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'backup_runs') THEN
+    ALTER TABLE public.backup_runs ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS "Only Admins can view or manage backup_runs" ON public.backup_runs;
+    DROP POLICY IF EXISTS "Allow backend access to backup_runs" ON public.backup_runs;
+    CREATE POLICY "Allow backend access to backup_runs" ON public.backup_runs
+      FOR ALL TO service_role USING (true) WITH CHECK (true);
+  END IF;
+END $$;
 
 -- 9. Storage Objects
 DO $$

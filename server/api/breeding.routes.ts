@@ -8,6 +8,8 @@ import {
   Animal,
   BreedingEvent,
   CalvingEvent,
+  Expense,
+  ExpenseAllocation,
   WeightRecord,
 } from '../../src/types/mais.ts';
 import {
@@ -21,7 +23,12 @@ import {
   insertAnimal,
   insertBreedingEvent,
   insertCalvingEvent,
+  insertExpense,
+  insertExpenseAllocation,
+  insertPayment,
+  insertTask,
   insertWeightRecord,
+  updateBreedingEvent,
 } from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
@@ -139,7 +146,7 @@ breedingRouter.post(
 
     if (cost > 0) {
       const expId = `EXP-${Date.now()}`;
-      db.expenses.unshift({
+      const breedingExpense: Expense = {
         id: expId,
         transactionCode: generateExpenseTransactionCode(db.expenses),
         expenseDate: inseminationDate,
@@ -159,8 +166,15 @@ breedingRouter.post(
         approvedBy: user.fullName,
         isReversed: false,
         reversalReason: null,
+      };
+      db.expenses.unshift(breedingExpense);
+      // Allocation/payment below have an FK on expense_id, so each must wait
+      // for the expense's Supabase write instead of racing it.
+      const breedingExpenseReady = insertExpense(breedingExpense).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase expense persistence warning:', err?.message || err);
       });
-      db.expenseAllocations.unshift({
+
+      const breedingAlloc: ExpenseAllocation = {
         id: `ALC-${Date.now()}`,
         expenseId: expId,
         feedIssueId: null,
@@ -170,33 +184,50 @@ breedingRouter.post(
         allocationMethod: 'Direct 100%',
         amountNgn: cost,
         notes: `Direct AI breeding cost for ${animal.currentTag}`,
-      });
-      db.payments.push({
+      };
+      db.expenseAllocations.unshift(breedingAlloc);
+      breedingExpenseReady
+        .then(() => insertExpenseAllocation(breedingAlloc))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase expense allocation persistence warning:', err?.message || err);
+        });
+
+      const breedingPayment = {
         id: `PAY-${Date.now()}`,
         expenseId: expId,
         paymentDate: inseminationDate,
         amountNgn: cost,
-        paymentMethod: 'Bank Transfer',
+        paymentMethod: 'Bank Transfer' as const,
         referenceNumber: `AI-${brd.id.slice(-5)}`,
         recordedBy: user.fullName,
         notes: 'Breeding service settlement',
-      });
+      };
+      db.payments.push(breedingPayment);
+      breedingExpenseReady
+        .then(() => insertPayment(breedingPayment))
+        .catch((err) => {
+          console.warn('⚠️ [MAIS DB] Supabase payment persistence warning:', err?.message || err);
+        });
     }
 
     if (brd.pregnancyCheckDate && brd.pregnancyResult === 'Pending') {
-      db.tasks.unshift({
+      const pregCheckTask = {
         id: `TSK-${Date.now()}`,
         title: `Pregnancy Check Due for ${animal.currentTag} (Sire ${brd.sireIdOrStraw})`,
-        category: 'Pregnancy Check',
+        category: 'Pregnancy Check' as const,
         dueDate: brd.pregnancyCheckDate,
-        priority: 'Medium',
+        priority: 'Medium' as const,
         assignedTo: brd.technician,
         animalId: animal.id,
         animalTag: animal.currentTag,
         referenceId: brd.id,
-        status: 'Pending',
+        status: 'Pending' as const,
         completionNotes: '',
         completedAt: null,
+      };
+      db.tasks.unshift(pregCheckTask);
+      insertTask(pregCheckTask).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase task persistence warning:', err?.message || err);
       });
     }
 
@@ -287,6 +318,9 @@ breedingRouter.post(
 
     if (linkedBreeding) {
       linkedBreeding.status = 'Calved';
+      updateBreedingEvent(linkedBreeding.id, { status: linkedBreeding.status }).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase breeding event update warning:', err?.message || err);
+      });
     }
 
     for (const c of calfInputList) {
@@ -331,7 +365,11 @@ breedingRouter.post(
         assignedBy: user.fullName,
       };
       db.animalIdentifiers.push(calfIdent);
-      insertAnimal(calfAnimal, calfIdent).catch((e) => console.warn('Supabase calf insert warning:', e));
+      // Other inserts below (weight record, animal event) have an FK on this
+      // calf's animal_id, so they must wait for this insert rather than race it.
+      const calfAnimalReady = insertAnimal(calfAnimal, calfIdent).catch((e) =>
+        console.warn('Supabase calf insert warning:', e)
+      );
 
       if (c.birthWeightKg && Number(c.birthWeightKg) > 0) {
         const wRec: WeightRecord = {
@@ -345,7 +383,9 @@ breedingRouter.post(
           notes: 'Birth weight recorded at calving',
         };
         db.weightRecords.push(wRec);
-        insertWeightRecord(wRec).catch((e) => console.warn('Supabase birth weight sync warning:', e));
+        calfAnimalReady
+          .then(() => insertWeightRecord(wRec))
+          .catch((e) => console.warn('Supabase birth weight sync warning:', e));
       }
 
       appendAnimalEvent(
@@ -356,7 +396,8 @@ breedingRouter.post(
         `Dam: ${dam.currentTag} (${dam.id}) · Sire: ${sire} · Birth Weight: ${c.birthWeightKg || 'N/A'} kg.`,
         permanentCalfId,
         null,
-        user.fullName
+        user.fullName,
+        calfAnimalReady
       );
 
       createdCalfIds.push(permanentCalfId);

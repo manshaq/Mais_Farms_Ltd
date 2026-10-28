@@ -8,9 +8,14 @@ import {
   AnimalEvent,
   AnimalIdentifier,
   AttachmentRecord,
+  AuditLog,
+  BackupPolicySettings,
+  BackupRunLog,
   BreedingEvent,
   CalvingEvent,
+  EmailNotificationLog,
   Expense,
+  ExpenseAllocation,
   FarmTask,
   FeedIssue,
   FeedProduct,
@@ -18,6 +23,7 @@ import {
   HealthEpisode,
   InventoryMovement,
   MaisDatabaseState,
+  NotificationSettings,
   Payment,
   StaffUser,
   Supplier,
@@ -165,6 +171,30 @@ export function mapPaymentToDb(payment: Payment) {
  * Insert a new animal and its initial identifier into Supabase.
  * Returns null if Supabase is not configured (local dev fallback).
  */
+/**
+ * Upserts the core StaffUser row (id, role, title, status, etc.) into Supabase.
+ * Used to persist users auto-provisioned from a Supabase Auth sign-in that had
+ * no matching public.users row yet. Excludes auth-sensitive fields managed
+ * exclusively by the Supabase Auth Admin API (password, email verification).
+ */
+export async function upsertStaffUserCore(user: StaffUser) {
+  return upsertRowById(
+    'users',
+    {
+      id: user.id,
+      auth_user_id: user.supabaseUserId || null,
+      full_name: user.fullName,
+      email: user.email.toLowerCase(),
+      role: user.role,
+      title: user.title,
+      can_approve_expenses: user.canApproveExpenses,
+      status: user.status,
+      deleted: Boolean(user.deleted),
+    },
+    'upsertStaffUserCore'
+  );
+}
+
 export async function insertAnimal(animal: Animal, identifier: AnimalIdentifier) {
   if (!supabaseClient) return null;
   const dbAnimal = mapAnimalToDb(animal);
@@ -379,6 +409,68 @@ async function upsertRowById(table: string, row: Record<string, any>, label: str
   return true;
 }
 
+/** Shared partial-update-by-id helper, mirroring insertRow's no-op/warn semantics. */
+async function updateRowById(table: string, id: string, dbUpdates: Record<string, unknown>, label: string) {
+  if (!supabaseClient) return null;
+  if (Object.keys(dbUpdates).length === 0) return null;
+  const { error } = await supabaseClient.from(table).update(dbUpdates).eq('id', id);
+  if (error) console.warn(`Supabase ${label} warning:`, error.message);
+  return true;
+}
+
+export function mapExpenseUpdatesToDb(updates: Partial<Expense>): Record<string, unknown> {
+  const mapped: Record<string, unknown> = {};
+  if (updates.paymentStatus !== undefined) mapped.payment_status = updates.paymentStatus;
+  if (updates.approvalStatus !== undefined) mapped.approval_status = updates.approvalStatus;
+  if (updates.approvedBy !== undefined) mapped.approved_by = updates.approvedBy;
+  if (updates.isReversed !== undefined) mapped.is_reversed = updates.isReversed;
+  if (updates.reversalReason !== undefined) mapped.reversal_reason = updates.reversalReason;
+  return mapped;
+}
+
+export async function updateExpense(id: string, updates: Partial<Expense>) {
+  return updateRowById('expenses', id, mapExpenseUpdatesToDb(updates), 'updateExpense');
+}
+
+export function mapBreedingEventUpdatesToDb(updates: Partial<BreedingEvent>): Record<string, unknown> {
+  const mapped: Record<string, unknown> = {};
+  if (updates.pregnancyCheckDate !== undefined) mapped.pregnancy_check_date = updates.pregnancyCheckDate;
+  if (updates.pregnancyCheckMethod !== undefined) mapped.pregnancy_check_method = updates.pregnancyCheckMethod;
+  if (updates.pregnancyResult !== undefined) mapped.pregnancy_result = updates.pregnancyResult;
+  if (updates.status !== undefined) mapped.status = updates.status;
+  if (updates.notes !== undefined) mapped.notes = updates.notes;
+  return mapped;
+}
+
+export async function updateBreedingEvent(id: string, updates: Partial<BreedingEvent>) {
+  return updateRowById('breeding_events', id, mapBreedingEventUpdatesToDb(updates), 'updateBreedingEvent');
+}
+
+export function mapHealthEpisodeUpdatesToDb(updates: Partial<HealthEpisode>): Record<string, unknown> {
+  const mapped: Record<string, unknown> = {};
+  if (updates.status !== undefined) mapped.status = updates.status;
+  if (updates.outcome !== undefined) mapped.outcome = updates.outcome;
+  if (updates.notes !== undefined) mapped.notes = updates.notes;
+  return mapped;
+}
+
+export async function updateHealthEpisode(id: string, updates: Partial<HealthEpisode>) {
+  return updateRowById('health_episodes', id, mapHealthEpisodeUpdatesToDb(updates), 'updateHealthEpisode');
+}
+
+export function mapFeedProductUpdatesToDb(updates: Partial<FeedProduct>): Record<string, unknown> {
+  const mapped: Record<string, unknown> = {};
+  if (updates.standardUnitCostNgn !== undefined) mapped.standard_unit_cost_ngn = updates.standardUnitCostNgn;
+  if (updates.openingStock !== undefined) mapped.opening_stock = updates.openingStock;
+  if (updates.reorderLevel !== undefined) mapped.reorder_level = updates.reorderLevel;
+  if (updates.storageLocation !== undefined) mapped.storage_location = updates.storageLocation;
+  return mapped;
+}
+
+export async function updateFeedProduct(id: string, updates: Partial<FeedProduct>) {
+  return updateRowById('feed_products', id, mapFeedProductUpdatesToDb(updates), 'updateFeedProduct');
+}
+
 export async function insertAnimalEvent(event: AnimalEvent) {
   return insertRow('animal_events', mapAnimalEventToDb(event), 'insertAnimalEvent');
 }
@@ -417,6 +509,40 @@ export async function insertInventoryMovement(movement: InventoryMovement) {
 
 export async function insertTask(task: FarmTask) {
   return insertRow('tasks', mapTaskToDb(task), 'insertTask');
+}
+
+export async function insertExpenseAllocation(allocation: ExpenseAllocation) {
+  return insertRow('expense_allocations', mapExpenseAllocationToDb(allocation), 'insertExpenseAllocation');
+}
+
+export async function insertAuditLog(entry: AuditLog) {
+  return insertRow('audit_logs', mapAuditLogToDb(entry), 'insertAuditLog');
+}
+
+export async function insertEmailLog(log: EmailNotificationLog) {
+  return insertRow('email_logs', mapEmailLogToDb(log), 'insertEmailLog');
+}
+
+export async function insertBackupRun(run: BackupRunLog) {
+  return insertRow('backup_runs', mapBackupRunToDb(run), 'insertBackupRun');
+}
+
+export async function updateBackupRun(id: string, updates: Partial<BackupRunLog>) {
+  const mapped: Record<string, unknown> = {};
+  if (updates.status !== undefined) mapped.status = updates.status;
+  if (updates.completedAt !== undefined) mapped.completed_at = updates.completedAt;
+  if (updates.attemptCount !== undefined) mapped.attempt_count = updates.attemptCount;
+  if (updates.errorSummary !== undefined) mapped.error_summary = updates.errorSummary;
+  if (updates.prunedAt !== undefined) mapped.pruned_at = updates.prunedAt;
+  return updateRowById('backup_runs', id, mapped, 'updateBackupRun');
+}
+
+export async function upsertNotificationSettings(settings: NotificationSettings) {
+  return upsertRowById('notification_settings', mapNotificationSettingsToDb(settings), 'upsertNotificationSettings');
+}
+
+export async function upsertBackupSettings(settings: BackupPolicySettings) {
+  return upsertRowById('backup_settings', mapBackupSettingsToDb(settings), 'upsertBackupSettings');
 }
 
 export async function updateTask(taskId: string, updates: Partial<FarmTask>) {
@@ -468,19 +594,19 @@ export async function insertFeedProduct(product: FeedProduct) {
  * Safe upsert that handles self-referencing foreign keys (dam_id).
  */
 export async function syncDatabaseToSupabase(state: MaisDatabaseState): Promise<{
-  synced: {
-    users: number;
-    suppliers: number;
-    feedProducts: number;
-    animals: number;
-    identifiers: number;
-    expenses: number;
-    payments: number;
-  };
+  synced: Record<string, number>;
 }> {
   if (!supabaseClient) {
     throw new Error('Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in .env.');
   }
+
+  const upsertMany = async (table: string, rows: Record<string, unknown>[], label: string) => {
+    if (rows.length > 0) {
+      const { error } = await supabaseClient!.from(table).upsert(rows, { onConflict: 'id' });
+      if (error) throw new Error(`Failed to sync ${label}: ${error.message}`);
+    }
+    return rows.length;
+  };
 
   // 1. Users
   const dbUsers = state.users.map((u) => ({
@@ -561,18 +687,88 @@ export async function syncDatabaseToSupabase(state: MaisDatabaseState): Promise<
     if (error) throw new Error(`Failed to sync animal identifiers: ${error.message}`);
   }
 
-  // 7. Expenses
+  // 7-15. Clinical, breeding, and feed records (all reference animals/feed_products, inserted above)
+  const healthEpisodes = await upsertMany(
+    'health_episodes',
+    state.healthEpisodes.map(mapHealthEpisodeToDb),
+    'health episodes'
+  );
+  const treatments = await upsertMany('treatments', state.treatments.map(mapTreatmentToDb), 'treatments');
+  const vaccinations = await upsertMany(
+    'vaccination_records',
+    state.vaccinations.map(mapVaccinationToDb),
+    'vaccinations'
+  );
+  const weightRecords = await upsertMany(
+    'weight_records',
+    state.weightRecords.map(mapWeightRecordToDb),
+    'weight records'
+  );
+  const breedingEvents = await upsertMany(
+    'breeding_events',
+    state.breedingEvents.map(mapBreedingEventToDb),
+    'breeding events'
+  );
+  const calvingEvents = await upsertMany(
+    'calving_events',
+    state.calvingEvents.map(mapCalvingEventToDb),
+    'calving events'
+  );
+  const feedPurchases = await upsertMany(
+    'feed_purchases',
+    state.feedPurchases.map(mapFeedPurchaseToDb),
+    'feed purchases'
+  );
+  const feedIssues = await upsertMany('feed_issues', state.feedIssues.map(mapFeedIssueToDb), 'feed issues');
+  const inventoryMovements = await upsertMany(
+    'inventory_movements',
+    state.inventoryMovements.map(mapInventoryMovementToDb),
+    'inventory movements'
+  );
+
+  // 16. Expenses
   const dbExpenses = state.expenses.map((e) => mapExpenseToDb(e));
   if (dbExpenses.length > 0) {
     const { error } = await supabaseClient.from('expenses').upsert(dbExpenses, { onConflict: 'id' });
     if (error) throw new Error(`Failed to sync expenses: ${error.message}`);
   }
 
-  // 8. Payments
+  // 17. Expense allocations (reference expenses, feed_issues, and animals — all synced above)
+  const expenseAllocations = await upsertMany(
+    'expense_allocations',
+    state.expenseAllocations.map(mapExpenseAllocationToDb),
+    'expense allocations'
+  );
+
+  // 18. Payments
   const dbPayments = state.payments.map((p) => mapPaymentToDb(p));
   if (dbPayments.length > 0) {
     const { error } = await supabaseClient.from('payments').upsert(dbPayments, { onConflict: 'id' });
     if (error) throw new Error(`Failed to sync payments: ${error.message}`);
+  }
+
+  // 19-21. Tasks, animal timeline events, and audit log
+  const tasks = await upsertMany('tasks', state.tasks.map(mapTaskToDb), 'tasks');
+  const animalEvents = await upsertMany('animal_events', state.animalEvents.map(mapAnimalEventToDb), 'animal events');
+  const auditLogs = await upsertMany('audit_logs', state.auditLogs.map(mapAuditLogToDb), 'audit logs');
+
+  // 22-26. Attachments, backup/notification singletons, backup runs, and email logs
+  const attachments = await upsertMany('attachments', state.attachments.map(mapAttachmentToDb), 'attachments');
+  const backupRuns = await upsertMany(
+    'backup_runs',
+    (state.backupRuns || []).map(mapBackupRunToDb),
+    'backup runs'
+  );
+  const emailLogs = await upsertMany(
+    'email_logs',
+    (state.emailLogs || []).map(mapEmailLogToDb),
+    'email logs'
+  );
+  if (state.backupSettings) {
+    await upsertBackupSettings(state.backupSettings);
+  }
+  if (state.notificationSettings) {
+    await upsertNotificationSettings(state.notificationSettings);
   }
 
   return {
@@ -582,8 +778,24 @@ export async function syncDatabaseToSupabase(state: MaisDatabaseState): Promise<
       feedProducts: dbProducts.length,
       animals: dbAnimalsPass1.length,
       identifiers: dbIdents.length,
+      healthEpisodes,
+      treatments,
+      vaccinations,
+      weightRecords,
+      breedingEvents,
+      calvingEvents,
+      feedPurchases,
+      feedIssues,
+      inventoryMovements,
       expenses: dbExpenses.length,
+      expenseAllocations,
       payments: dbPayments.length,
+      tasks,
+      animalEvents,
+      attachments,
+      backupRuns,
+      emailLogs,
+      auditLogs,
     },
   };
 }
@@ -633,7 +845,7 @@ export function mapDbToIdentifier(row: Record<string, any>): AnimalIdentifier {
 export function mapDbToUser(row: Record<string, any>): StaffUser {
   return {
     id: row.id,
-    supabaseUserId: row.supabase_user_id || undefined,
+    supabaseUserId: row.auth_user_id || undefined,
     fullName: row.full_name,
     email: row.email,
     role: row.role,
@@ -1009,6 +1221,8 @@ export function mapTaskToDb(t: FarmTask) {
     completed_at: t.completedAt || null,
     related_entity_type: t.animalId ? 'Animal' : null,
     related_entity_id: t.animalId || null,
+    reference_id: t.referenceId || null,
+    animal_tag: t.animalTag || null,
     created_by: t.assignedTo || 'System',
   };
 }
@@ -1022,8 +1236,8 @@ export function mapDbToTask(row: Record<string, any>): FarmTask {
     dueDate: row.due_date,
     assignedTo: row.assigned_to_name || 'Staff',
     animalId: row.related_entity_type === 'Animal' ? row.related_entity_id : null,
-    animalTag: null,
-    referenceId: null,
+    animalTag: row.animal_tag || null,
+    referenceId: row.reference_id || null,
     status: row.status,
     completionNotes: row.description || '',
     completedAt: row.completed_at || null,
@@ -1058,6 +1272,258 @@ export function mapDbToAnimalEvent(row: Record<string, any>): AnimalEvent {
   };
 }
 
+export function mapExpenseAllocationToDb(a: ExpenseAllocation) {
+  return {
+    id: a.id,
+    expense_id: a.expenseId || null,
+    feed_issue_id: a.feedIssueId || null,
+    animal_id: a.animalId,
+    allocation_date: a.allocationDate,
+    allocation_category: a.allocationCategory,
+    allocation_method: a.allocationMethod,
+    allocated_amount_ngn: a.amountNgn,
+    notes: a.notes || null,
+  };
+}
+
+export function mapDbToExpenseAllocation(row: Record<string, any>): ExpenseAllocation {
+  return {
+    id: row.id,
+    expenseId: row.expense_id || null,
+    feedIssueId: row.feed_issue_id || null,
+    animalId: row.animal_id,
+    allocationDate: row.allocation_date,
+    allocationCategory: row.allocation_category || '',
+    allocationMethod: row.allocation_method,
+    amountNgn: Number(row.allocated_amount_ngn) || 0,
+    notes: row.notes || '',
+  };
+}
+
+export function mapAuditLogToDb(a: AuditLog) {
+  return {
+    id: a.id,
+    timestamp: a.timestamp,
+    user_id: a.userId,
+    user_name: a.userName,
+    user_role: a.userRole,
+    action: a.action,
+    entity_type: a.entityType,
+    entity_id: a.entityId,
+    animal_tag: a.animalTag || null,
+    summary: a.summary,
+    previous_value: a.previousValue || null,
+    new_value: a.newValue || null,
+    previous_hash: a.previousHash || null,
+    integrity_hash: a.integrityHash,
+  };
+}
+
+export function mapDbToAuditLog(row: Record<string, any>): AuditLog {
+  return {
+    id: row.id,
+    timestamp: row.timestamp,
+    userId: row.user_id,
+    userName: row.user_name,
+    userRole: row.user_role,
+    action: row.action,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    animalTag: row.animal_tag || null,
+    summary: row.summary,
+    previousValue: row.previous_value || null,
+    newValue: row.new_value || null,
+    previousHash: row.previous_hash || null,
+    integrityHash: row.integrity_hash,
+  };
+}
+
+export function mapAttachmentToDb(att: AttachmentRecord) {
+  return {
+    id: att.id,
+    animal_id: att.animalId || null,
+    entity_type: att.entityType,
+    entity_id: att.entityId,
+    file_name: att.fileName,
+    file_type: att.fileType,
+    file_size_kb: att.fileSizeKb || 1,
+    storage_bucket: att.storageBucket || null,
+    storage_path: att.storagePath || null,
+    mime_type: att.mimeType || null,
+    sha256_hash: att.sha256Hash || null,
+    notes: att.notes || null,
+    uploaded_by: att.uploadedBy,
+    uploaded_at: att.uploadedAt,
+  };
+}
+
+export function mapDbToAttachment(row: Record<string, any>): AttachmentRecord {
+  return {
+    id: row.id,
+    animalId: row.animal_id || null,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    fileName: row.file_name,
+    fileType: row.file_type,
+    fileSizeKb: Number(row.file_size_kb) || 1,
+    uploadedAt: row.uploaded_at,
+    uploadedBy: row.uploaded_by,
+    notes: row.notes || '',
+    sha256Hash: row.sha256_hash || undefined,
+    mimeType: row.mime_type || undefined,
+    storageBucket: row.storage_bucket || undefined,
+    storagePath: row.storage_path || undefined,
+  };
+}
+
+export function mapEmailLogToDb(e: EmailNotificationLog) {
+  return {
+    id: e.id,
+    sent_at: e.sentAt,
+    category: e.category,
+    subject: e.subject,
+    recipients: e.recipients || [],
+    status: e.status,
+    transport: e.transport,
+    summary_text: e.summaryText || '',
+    html_body: e.htmlBody || '',
+    attachments: e.attachments || [],
+    dedup_key: e.dedupKey || null,
+    triggered_by: e.triggeredBy,
+  };
+}
+
+export function mapDbToEmailLog(row: Record<string, any>): EmailNotificationLog {
+  return {
+    id: row.id,
+    sentAt: row.sent_at,
+    category: row.category,
+    subject: row.subject,
+    recipients: Array.isArray(row.recipients) ? row.recipients : [],
+    status: row.status,
+    transport: row.transport,
+    summaryText: row.summary_text || '',
+    htmlBody: row.html_body || '',
+    attachments: Array.isArray(row.attachments) ? row.attachments : [],
+    dedupKey: row.dedup_key || null,
+    triggeredBy: row.triggered_by,
+  };
+}
+
+export function mapBackupRunToDb(r: BackupRunLog) {
+  return {
+    id: r.id,
+    snapshot_id: r.snapshotId,
+    started_at: r.startedAt,
+    completed_at: r.completedAt || null,
+    tier: r.tier,
+    engine: r.engine,
+    status: r.status,
+    attempt_count: r.attemptCount,
+    max_attempts: r.maxAttempts,
+    file_name: r.fileName,
+    uncompressed_size_bytes: r.uncompressedSizeBytes,
+    encrypted_size_bytes: r.encryptedSizeBytes,
+    encrypted: r.encrypted,
+    cipher: r.cipher,
+    sha256_checksum: r.sha256Checksum,
+    storage_destinations: r.storageDestinations || [],
+    s3_key: r.s3Key || null,
+    immutable_protected: r.immutableProtected,
+    object_lock_retain_until: r.objectLockRetainUntil || null,
+    retention_expires_at: r.retentionExpiresAt,
+    pruned_at: r.prunedAt || null,
+    error_summary: r.errorSummary || null,
+    triggered_by: r.triggeredBy,
+  };
+}
+
+export function mapDbToBackupRun(row: Record<string, any>): BackupRunLog {
+  return {
+    id: row.id,
+    snapshotId: row.snapshot_id,
+    startedAt: row.started_at,
+    completedAt: row.completed_at || null,
+    tier: row.tier,
+    engine: row.engine,
+    status: row.status,
+    attemptCount: Number(row.attempt_count) || 1,
+    maxAttempts: Number(row.max_attempts) || 3,
+    fileName: row.file_name,
+    uncompressedSizeBytes: Number(row.uncompressed_size_bytes) || 0,
+    encryptedSizeBytes: Number(row.encrypted_size_bytes) || 0,
+    encrypted: Boolean(row.encrypted),
+    cipher: row.cipher || 'AES-256-GCM',
+    sha256Checksum: row.sha256_checksum,
+    storageDestinations: Array.isArray(row.storage_destinations) ? row.storage_destinations : [],
+    s3Key: row.s3_key || null,
+    immutableProtected: Boolean(row.immutable_protected),
+    objectLockRetainUntil: row.object_lock_retain_until || null,
+    retentionExpiresAt: row.retention_expires_at,
+    prunedAt: row.pruned_at || null,
+    errorSummary: row.error_summary || null,
+    triggeredBy: row.triggered_by,
+  };
+}
+
+export function mapNotificationSettingsToDb(s: NotificationSettings) {
+  return {
+    id: 'default',
+    auto_monthly_report_enabled: s.autoMonthlyReportEnabled,
+    monthly_report_day_of_month: s.monthlyReportDayOfMonth,
+    auto_daily_reminder_enabled: s.autoDailyReminderEnabled,
+    reminder_lead_days: s.reminderLeadDays,
+    additional_recipient_emails: s.additionalRecipientEmails || '',
+    last_monthly_report_sent_month: s.lastMonthlyReportSentMonth || null,
+    last_daily_reminder_run_date: s.lastDailyReminderRunDate || null,
+  };
+}
+
+export function mapDbToNotificationSettings(row: Record<string, any>): NotificationSettings {
+  return {
+    autoMonthlyReportEnabled: Boolean(row.auto_monthly_report_enabled),
+    monthlyReportDayOfMonth: Number(row.monthly_report_day_of_month) || 1,
+    autoDailyReminderEnabled: Boolean(row.auto_daily_reminder_enabled),
+    reminderLeadDays: Number(row.reminder_lead_days) || 1,
+    additionalRecipientEmails: row.additional_recipient_emails || '',
+    lastMonthlyReportSentMonth: row.last_monthly_report_sent_month || null,
+    lastDailyReminderRunDate: row.last_daily_reminder_run_date || null,
+  };
+}
+
+export function mapBackupSettingsToDb(s: BackupPolicySettings) {
+  return {
+    id: 'default',
+    auto_backup_enabled: s.autoBackupEnabled,
+    schedule_hour_utc: s.scheduleHourUtc,
+    daily_retention_days: s.dailyRetentionDays,
+    monthly_retention_months: s.monthlyRetentionMonths,
+    max_retry_attempts: s.maxRetryAttempts,
+    immutable_object_lock: s.immutableObjectLock,
+    object_lock_days: s.objectLockDays,
+    alert_admin_on_failure: s.alertAdminOnFailure,
+    alert_recipient_email: s.alertRecipientEmail || '',
+    last_daily_backup_date: s.lastDailyBackupDate || null,
+    last_monthly_backup_month: s.lastMonthlyBackupMonth || null,
+  };
+}
+
+export function mapDbToBackupSettings(row: Record<string, any>): BackupPolicySettings {
+  return {
+    autoBackupEnabled: Boolean(row.auto_backup_enabled),
+    scheduleHourUtc: Number(row.schedule_hour_utc) || 0,
+    dailyRetentionDays: Number(row.daily_retention_days) || 30,
+    monthlyRetentionMonths: Number(row.monthly_retention_months) || 12,
+    maxRetryAttempts: Number(row.max_retry_attempts) || 3,
+    immutableObjectLock: Boolean(row.immutable_object_lock),
+    objectLockDays: Number(row.object_lock_days) || 30,
+    alertAdminOnFailure: Boolean(row.alert_admin_on_failure),
+    alertRecipientEmail: row.alert_recipient_email || '',
+    lastDailyBackupDate: row.last_daily_backup_date || null,
+    lastMonthlyBackupMonth: row.last_monthly_backup_month || null,
+  };
+}
+
 /**
  * Hydrates the in-memory store from Supabase PostgreSQL tables (C3).
  * Solves Vercel serverless cold-start data persistence by making PostgreSQL
@@ -1086,6 +1552,13 @@ export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): 
       movementsRes,
       tasksRes,
       eventsRes,
+      allocationsRes,
+      auditRes,
+      attachmentsRes,
+      backupRunsRes,
+      backupSettingsRes,
+      notificationSettingsRes,
+      emailLogsRes,
     ] = await Promise.all([
       supabaseClient.from('users').select('*'),
       supabaseClient.from('animals').select('*'),
@@ -1105,6 +1578,13 @@ export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): 
       supabaseClient.from('inventory_movements').select('*'),
       supabaseClient.from('tasks').select('*'),
       supabaseClient.from('animal_events').select('*'),
+      supabaseClient.from('expense_allocations').select('*'),
+      supabaseClient.from('audit_logs').select('*').order('timestamp', { ascending: false }),
+      supabaseClient.from('attachments').select('*'),
+      supabaseClient.from('backup_runs').select('*'),
+      supabaseClient.from('backup_settings').select('*').eq('id', 'default').maybeSingle(),
+      supabaseClient.from('notification_settings').select('*').eq('id', 'default').maybeSingle(),
+      supabaseClient.from('email_logs').select('*'),
     ]);
 
     if (usersRes.data && usersRes.data.length > 0) {
@@ -1182,6 +1662,27 @@ export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): 
     }
     if (eventsRes.data && eventsRes.data.length > 0) {
       targetDb.animalEvents = eventsRes.data.map(mapDbToAnimalEvent);
+    }
+    if (allocationsRes.data && allocationsRes.data.length > 0) {
+      targetDb.expenseAllocations = allocationsRes.data.map(mapDbToExpenseAllocation);
+    }
+    if (auditRes.data && auditRes.data.length > 0) {
+      targetDb.auditLogs = auditRes.data.map(mapDbToAuditLog);
+    }
+    if (attachmentsRes.data && attachmentsRes.data.length > 0) {
+      targetDb.attachments = attachmentsRes.data.map(mapDbToAttachment);
+    }
+    if (backupRunsRes.data && backupRunsRes.data.length > 0) {
+      targetDb.backupRuns = backupRunsRes.data.map(mapDbToBackupRun);
+    }
+    if (backupSettingsRes.data) {
+      targetDb.backupSettings = mapDbToBackupSettings(backupSettingsRes.data);
+    }
+    if (notificationSettingsRes.data) {
+      targetDb.notificationSettings = mapDbToNotificationSettings(notificationSettingsRes.data);
+    }
+    if (emailLogsRes.data && emailLogsRes.data.length > 0) {
+      targetDb.emailLogs = emailLogsRes.data.map(mapDbToEmailLog);
     }
 
     return true;
