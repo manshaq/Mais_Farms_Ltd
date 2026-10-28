@@ -360,67 +360,63 @@ export async function insertPayment(payment: Payment) {
   return true;
 }
 
-export async function insertHealthEpisode(episode: HealthEpisode) {
+/**
+ * Shared single-row insert helper: no-ops when Supabase isn't configured,
+ * warns (without throwing) on failure so callers can fire-and-forget.
+ */
+async function insertRow(table: string, row: Record<string, any>, label: string) {
   if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('health_episodes').insert([mapHealthEpisodeToDb(episode)]);
-  if (error) console.warn('Supabase insertHealthEpisode warning:', error.message);
+  const { error } = await supabaseClient.from(table).insert([row]);
+  if (error) console.warn(`Supabase ${label} warning:`, error.message);
   return true;
+}
+
+/** Same as insertRow but upserts on `id`, for entities that may be re-resolved by name/id. */
+async function upsertRowById(table: string, row: Record<string, any>, label: string) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from(table).upsert([row], { onConflict: 'id' });
+  if (error) console.warn(`Supabase ${label} warning:`, error.message);
+  return true;
+}
+
+export async function insertAnimalEvent(event: AnimalEvent) {
+  return insertRow('animal_events', mapAnimalEventToDb(event), 'insertAnimalEvent');
+}
+
+export async function insertHealthEpisode(episode: HealthEpisode) {
+  return insertRow('health_episodes', mapHealthEpisodeToDb(episode), 'insertHealthEpisode');
 }
 
 export async function insertTreatment(treatment: Treatment) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('treatments').insert([mapTreatmentToDb(treatment)]);
-  if (error) console.warn('Supabase insertTreatment warning:', error.message);
-  return true;
+  return insertRow('treatments', mapTreatmentToDb(treatment), 'insertTreatment');
 }
 
 export async function insertVaccinationRecord(record: VaccinationRecord) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('vaccination_records').insert([mapVaccinationToDb(record)]);
-  if (error) console.warn('Supabase insertVaccinationRecord warning:', error.message);
-  return true;
+  return insertRow('vaccination_records', mapVaccinationToDb(record), 'insertVaccinationRecord');
 }
 
 export async function insertBreedingEvent(event: BreedingEvent) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('breeding_events').insert([mapBreedingEventToDb(event)]);
-  if (error) console.warn('Supabase insertBreedingEvent warning:', error.message);
-  return true;
+  return insertRow('breeding_events', mapBreedingEventToDb(event), 'insertBreedingEvent');
 }
 
 export async function insertCalvingEvent(event: CalvingEvent) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('calving_events').insert([mapCalvingEventToDb(event)]);
-  if (error) console.warn('Supabase insertCalvingEvent warning:', error.message);
-  return true;
+  return insertRow('calving_events', mapCalvingEventToDb(event), 'insertCalvingEvent');
 }
 
 export async function insertFeedPurchase(purchase: FeedPurchase) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('feed_purchases').insert([mapFeedPurchaseToDb(purchase)]);
-  if (error) console.warn('Supabase insertFeedPurchase warning:', error.message);
-  return true;
+  return insertRow('feed_purchases', mapFeedPurchaseToDb(purchase), 'insertFeedPurchase');
 }
 
 export async function insertFeedIssue(issue: FeedIssue) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('feed_issues').insert([mapFeedIssueToDb(issue)]);
-  if (error) console.warn('Supabase insertFeedIssue warning:', error.message);
-  return true;
+  return insertRow('feed_issues', mapFeedIssueToDb(issue), 'insertFeedIssue');
 }
 
 export async function insertInventoryMovement(movement: InventoryMovement) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('inventory_movements').insert([mapInventoryMovementToDb(movement)]);
-  if (error) console.warn('Supabase insertInventoryMovement warning:', error.message);
-  return true;
+  return insertRow('inventory_movements', mapInventoryMovementToDb(movement), 'insertInventoryMovement');
 }
 
 export async function insertTask(task: FarmTask) {
-  if (!supabaseClient) return null;
-  const { error } = await supabaseClient.from('tasks').insert([mapTaskToDb(task)]);
-  if (error) console.warn('Supabase insertTask warning:', error.message);
-  return true;
+  return insertRow('tasks', mapTaskToDb(task), 'insertTask');
 }
 
 export async function updateTask(taskId: string, updates: Partial<FarmTask>) {
@@ -435,36 +431,36 @@ export async function updateTask(taskId: string, updates: Partial<FarmTask>) {
 }
 
 export async function insertSupplier(supplier: Supplier) {
-  if (!supabaseClient) return null;
-  const dbSupplier = {
-    id: supplier.id,
-    name: supplier.name,
-    category: supplier.category,
-    phone: supplier.phone || null,
-    email: supplier.email || null,
-    address: supplier.address || null,
-    notes: supplier.bankDetails || null,
-  };
-  const { error } = await supabaseClient.from('suppliers').upsert([dbSupplier], { onConflict: 'id' });
-  if (error) console.warn('Supabase insertSupplier warning:', error.message);
-  return true;
+  return upsertRowById(
+    'suppliers',
+    {
+      id: supplier.id,
+      name: supplier.name,
+      category: supplier.category,
+      phone: supplier.phone || null,
+      email: supplier.email || null,
+      address: supplier.address || null,
+      notes: supplier.bankDetails || null,
+    },
+    'insertSupplier'
+  );
 }
 
 export async function insertFeedProduct(product: FeedProduct) {
-  if (!supabaseClient) return null;
-  const dbProduct = {
-    id: product.id,
-    name: product.name,
-    category: product.category,
-    unit: product.unit,
-    opening_stock: product.openingStock,
-    reorder_level: product.reorderLevel,
-    standard_unit_cost_ngn: product.standardUnitCostNgn,
-    storage_location: product.storageLocation,
-  };
-  const { error } = await supabaseClient.from('feed_products').upsert([dbProduct], { onConflict: 'id' });
-  if (error) console.warn('Supabase insertFeedProduct warning:', error.message);
-  return true;
+  return upsertRowById(
+    'feed_products',
+    {
+      id: product.id,
+      name: product.name,
+      category: product.category,
+      unit: product.unit,
+      opening_stock: product.openingStock,
+      reorder_level: product.reorderLevel,
+      standard_unit_cost_ngn: product.standardUnitCostNgn,
+      storage_location: product.storageLocation,
+    },
+    'insertFeedProduct'
+  );
 }
 
 /**

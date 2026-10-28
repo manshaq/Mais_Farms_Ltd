@@ -12,6 +12,7 @@ import {
   MaisDatabaseState,
   StaffUser,
 } from '../../src/types/mais.ts';
+import { insertAnimalEvent } from './supabaseService.ts';
 
 const isTestEnv =
   process.env.NODE_ENV === 'test' ||
@@ -259,6 +260,9 @@ export function appendAnimalEvent(
     recordedBy,
   };
   db.animalEvents.push(evt);
+  insertAnimalEvent(evt).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase animal event persistence warning:', err?.message || err);
+  });
   return evt;
 }
 

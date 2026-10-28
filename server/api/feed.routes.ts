@@ -74,6 +74,9 @@ function resolveOrCreateFeedProduct(body: any): FeedProduct | null {
   };
 
   db.feedProducts.push(created);
+  insertFeedProduct(created).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase feed product persistence warning:', err?.message || err);
+  });
   return created;
 }
 
@@ -275,6 +278,9 @@ feedRouter.post(
         bankDetails: '',
       };
       db.suppliers.push(resolvedSupplier);
+      insertSupplier(resolvedSupplier).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase supplier persistence warning:', err?.message || err);
+      });
     }
 
     const qtyRec = Number(quantityReceived);

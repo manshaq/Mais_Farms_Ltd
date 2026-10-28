@@ -46,6 +46,20 @@ if (supabaseClient) {
   });
 }
 
+// Hold every request until initial Supabase hydration finishes, so a write
+// that lands during cold start can't be clobbered by hydration's wholesale
+// array replace once the hydration query resolves.
+apiRouter.use(async (req, res, next) => {
+  if (hydrationPromise) {
+    try {
+      await hydrationPromise;
+    } catch {
+      // Proceed with current in-memory db on hydration error
+    }
+  }
+  next();
+});
+
 apiRouter.use(attachStaffUser);
 apiRouter.use(authRouter);
 
@@ -55,13 +69,6 @@ apiRouter.use(authRouter);
  * Redacts administrative and audit data for non-Admin roles (M5).
  */
 apiRouter.get('/state', requirePermission('VIEW_RECORDS'), async (req: StaffRequest, res: Response) => {
-  if (hydrationPromise) {
-    try {
-      await hydrationPromise;
-    } catch {
-      // Proceed with current in-memory db on hydration error
-    }
-  }
   const user = req.staffUser;
   const isAdmin = user?.role === 'Admin';
 
