@@ -25,11 +25,18 @@ import {
   getBackupEnvironmentStatus,
   startAutomatedBackupScheduler,
 } from '../backup/backupService.ts';
+import { hydrateDatabaseFromSupabase } from '../db/supabaseService.ts';
 
 export const apiRouter = Router();
 
 startNotificationScheduler();
 startAutomatedBackupScheduler();
+
+if (supabaseClient) {
+  hydrateDatabaseFromSupabase(db).catch((err) => {
+    console.warn('⚠️ [MAIS DB] Supabase initial hydration warning:', err?.message || err);
+  });
+}
 
 apiRouter.use(attachStaffUser);
 apiRouter.use(authRouter);
@@ -37,8 +44,12 @@ apiRouter.use(authRouter);
 /**
  * GET /api/state
  * Returns the complete operational state and server-computed analytics.
+ * Redacts administrative and audit data for non-Admin roles (M5).
  */
-apiRouter.get('/state', requirePermission('VIEW_RECORDS'), (_req: StaffRequest, res: Response) => {
+apiRouter.get('/state', requirePermission('VIEW_RECORDS'), (req: StaffRequest, res: Response) => {
+  const user = req.staffUser;
+  const isAdmin = user?.role === 'Admin';
+
   const productStocks = db.feedProducts.map((p) =>
     calculateFeedProductStock(p, db.feedPurchases, db.feedIssues, db.inventoryMovements)
   );
@@ -60,11 +71,28 @@ apiRouter.get('/state', requirePermission('VIEW_RECORDS'), (_req: StaffRequest, 
     ])
   );
 
+  const safeUsers = isAdmin
+    ? db.users.map((u) => sanitizeUser(u))
+    : db.users.map((u) => ({
+        id: u.id,
+        fullName: u.fullName,
+        role: u.role,
+        title: u.title,
+        status: u.status,
+        canApproveExpenses: u.canApproveExpenses,
+      }));
+
+  const sanitizedDb = {
+    ...db,
+    users: safeUsers,
+    auditLogs: isAdmin ? db.auditLogs : [],
+    emailLogs: isAdmin ? db.emailLogs : [],
+    backupSettings: isAdmin ? db.backupSettings : null,
+    backupRuns: isAdmin ? db.backupRuns : [],
+  };
+
   res.json({
-    db: {
-      ...db,
-      users: db.users.map((u) => sanitizeUser(u)),
-    },
+    db: sanitizedDb,
     computed: {
       productStocks,
       financialSummary,
@@ -72,8 +100,8 @@ apiRouter.get('/state', requirePermission('VIEW_RECORDS'), (_req: StaffRequest, 
       animalCosts,
       supabaseConfigured: Boolean(supabaseClient),
       supabaseUrl: supabaseUrl ? supabaseUrl.replace(/^https?:\/\//, '') : null,
-      mailProvider: getMailTransportInfo(),
-      backupEnvironment: getBackupEnvironmentStatus(),
+      mailProvider: isAdmin ? getMailTransportInfo() : null,
+      backupEnvironment: isAdmin ? getBackupEnvironmentStatus() : null,
     },
   });
 });
@@ -82,8 +110,11 @@ apiRouter.post(
   '/reset-data',
   requirePermission('MANAGE_STAFF'),
   (_req: StaffRequest, res: Response) => {
-    if (process.env.NODE_ENV === 'production') {
-      res.status(404).json({ error: 'Not found.' });
+    // Only permit wiping data when explicitly enabled via ALLOW_RESET in non-production
+    if (process.env.NODE_ENV === 'production' || process.env.ALLOW_RESET !== 'true') {
+      res.status(403).json({
+        error: 'Database reset is disabled. Set ALLOW_RESET=true in non-production environments to enable.',
+      });
       return;
     }
     const cleanDb = resetDatabaseToClean();

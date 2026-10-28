@@ -6,7 +6,13 @@ import {
   Treatment,
   VaccinationRecord,
 } from '../../src/types/mais.ts';
-import { appendAnimalEvent, appendAudit, db, saveDatabase } from '../db/store.ts';
+import {
+  appendAnimalEvent,
+  appendAudit,
+  db,
+  generateExpenseTransactionCode,
+  saveDatabase,
+} from '../db/store.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
   validateNonNegativeNumber,
@@ -228,7 +234,7 @@ healthRouter.post(
       expenseId = `EXP-${Date.now()}`;
       const newExp: Expense = {
         id: expenseId,
-        transactionCode: `MAIS-EXP-2026-${db.expenses.length + 101}`,
+        transactionCode: generateExpenseTransactionCode(db.expenses),
         expenseDate: dateStr,
         amountNgn: totalCost,
         category: 'Veterinary & Treatment',
@@ -412,7 +418,7 @@ healthRouter.post(
       const expId = `EXP-${Date.now()}`;
       db.expenses.unshift({
         id: expId,
-        transactionCode: `MAIS-EXP-2026-${db.expenses.length + 101}`,
+        transactionCode: generateExpenseTransactionCode(db.expenses),
         expenseDate: dateStr,
         amountNgn: cost,
         category: 'Veterinary & Treatment',

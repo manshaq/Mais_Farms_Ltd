@@ -12,7 +12,14 @@ import {
   FeedPurchase,
   InventoryMovement,
 } from '../../src/types/mais.ts';
-import { appendAnimalEvent, appendAudit, db, saveDatabase } from '../db/store.ts';
+import {
+  appendAnimalEvent,
+  appendAudit,
+  db,
+  generateExpenseTransactionCode,
+  generateSupplierId,
+  saveDatabase,
+} from '../db/store.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
   validateNonNegativeNumber,
@@ -249,7 +256,7 @@ feedRouter.post(
     );
     if (!resolvedSupplier && cleanSupplierName) {
       resolvedSupplier = {
-        id: `SUP-${String(db.suppliers.length + 1).padStart(2, '0')}`,
+        id: generateSupplierId(db.suppliers),
         name: cleanSupplierName,
         category: 'Feed & Grain',
         phone: '',
@@ -300,7 +307,7 @@ feedRouter.post(
 
     const exp: Expense = {
       id: expenseId,
-      transactionCode: `MAIS-EXP-2026-${db.expenses.length + 101}`,
+      transactionCode: generateExpenseTransactionCode(db.expenses),
       expenseDate: dateStr,
       amountNgn: totalCostNgn,
       category: 'Feed & Nutrition',

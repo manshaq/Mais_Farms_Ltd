@@ -18,7 +18,6 @@ supabase/consolidated_schema.sql
 .vscode/
 supabase/.temp/
 docs/
-*.md
 metadata.json
 
 

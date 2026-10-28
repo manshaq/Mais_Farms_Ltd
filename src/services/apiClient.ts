@@ -57,15 +57,19 @@ export interface AnimalHistoryResponse {
 async function requestJson<T>(
   url: string,
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
-  bearerToken: string,
+  bearerToken?: string,
   body?: unknown
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (bearerToken) {
+    headers['Authorization'] = `Bearer ${bearerToken}`;
+  }
+
   const res = await fetch(url, {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${bearerToken}`,
-    },
+    headers,
     credentials: 'include', // forward HttpOnly auth_token cookie automatically
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -151,7 +155,7 @@ export const maisApiClient = {
   },
 
   // System state
-  getState: (userId: string) =>
+  getState: (bearerToken?: string) =>
     requestJson<{
       db: MaisDatabaseState;
       computed: {
@@ -162,7 +166,7 @@ export const maisApiClient = {
         supabaseConfigured: boolean;
         supabaseUrl: string | null;
       };
-    }>('/api/state', 'GET', userId),
+    }>('/api/state', 'GET', bearerToken),
 
   // Animals & Tag Search
   getAnimals: (

@@ -31,8 +31,8 @@ jobs:
         run: npm test
         env:
           NODE_ENV: test
-          INITIAL_ADMIN_PASSWORD: ${{ secrets.INITIAL_ADMIN_PASSWORD }}
-          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          INITIAL_ADMIN_PASSWORD: ${{ secrets.INITIAL_ADMIN_PASSWORD || 'MaisFarmTestAdminPass2026!' }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY || 'MaisFarmTestBackupEncKey2026!32B' }}
 
       - name: Build frontend bundle
         run: npm run build

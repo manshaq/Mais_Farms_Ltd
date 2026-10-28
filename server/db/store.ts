@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import os from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { INITIAL_MAIS_DB } from '../../src/data/seedData.ts';
 import { computeAuditEntryHash } from '../../src/domain/farmRules.ts';
@@ -12,7 +13,9 @@ import {
   StaffUser,
 } from '../../src/types/mais.ts';
 
-const DATA_DIR = process.env.VERCEL
+const DATA_DIR = process.env.NODE_ENV === 'test'
+  ? path.join(os.tmpdir(), `mais_test_${process.pid}`)
+  : process.env.VERCEL
   ? path.join('/tmp', 'data')
   : path.resolve(process.cwd(), 'data');
 const DB_FILE_PATH = path.join(DATA_DIR, 'mais_db.json');
@@ -28,19 +31,25 @@ export const supabaseUrl = cleanEnv(
   process.env.VITE_SUPABASE_URL
 );
 
-export const supabaseKey = cleanEnv(
+// Strict service-role key for backend PostgreSQL writes (bypasses RLS)
+export const supabaseServiceRoleKey = cleanEnv(
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.SUPABASE_SERVICE_KEY ||
   process.env.SERVICE_ROLE_KEY ||
-  process.env.SUPABASE_SECRET_KEY ||
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.SUPABASE_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY
+  process.env.SUPABASE_SECRET_KEY
 );
 
+// Anon key for client-facing auth actions (sign in with password)
+export const supabaseAnonKey = cleanEnv(
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.VITE_SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+);
+
+// Server-side database client (STRICTLY service_role key to prevent anon write attempts)
 export const supabaseClient =
-  supabaseUrl && supabaseKey
-    ? createClient(supabaseUrl, supabaseKey, {
+  supabaseUrl && supabaseServiceRoleKey
+    ? createClient(supabaseUrl, supabaseServiceRoleKey, {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
@@ -49,15 +58,27 @@ export const supabaseClient =
       })
     : null;
 
+// Isolated auth client for verifying user credentials without contaminating the service-role client
+export const supabaseAuthClient =
+  supabaseUrl && (supabaseAnonKey || supabaseServiceRoleKey)
+    ? createClient(supabaseUrl, supabaseAnonKey || supabaseServiceRoleKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      })
+    : null;
+
+// Refuse to boot in production without valid Supabase service role credentials (C1 & H8)
+if (process.env.NODE_ENV === 'production' && (!supabaseUrl || !supabaseServiceRoleKey)) {
+  console.error('FATAL [MAIS]: Production deployment requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+  console.error('Refusing to boot in production with insecure in-memory or fallback storage.');
+  process.exit(1);
+}
+
 if (supabaseUrl && supabaseClient) {
-  const isServiceRole = Boolean(
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY ||
-    process.env.SERVICE_ROLE_KEY
-  );
-  console.log(
-    `✔ [MAIS SUPABASE] Connected to ${supabaseUrl} (${isServiceRole ? 'service_role key' : 'anon key'}).`
-  );
+  console.log(`✔ [MAIS SUPABASE] Connected to ${supabaseUrl} with verified service_role key.`);
 }
 
 export function loadDatabase(): MaisDatabaseState {
@@ -168,7 +189,7 @@ export function appendAudit(
   const previousEntry = db.auditLogs[0];
   const previousHash = previousEntry?.integrityHash || null;
   const baseEntry = {
-    id: `AUD-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: `AUD-${Date.now()}-${randomUUID().slice(0, 8)}`,
     timestamp: new Date().toISOString(),
     userId: user.id,
     userName: user.fullName,
@@ -202,7 +223,7 @@ export function appendAnimalEvent(
   recordedBy: string
 ): AnimalEvent {
   const evt: AnimalEvent = {
-    id: `EVT-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+    id: `EVT-${Date.now()}-${randomUUID().slice(0, 8)}`,
     animalId,
     eventDate,
     eventType,
@@ -214,4 +235,59 @@ export function appendAnimalEvent(
   };
   db.animalEvents.push(evt);
   return evt;
+}
+
+/**
+ * Generates an collision-free, year-dynamic monotonic expense transaction code (M3).
+ */
+export function generateExpenseTransactionCode(existingExpenses: { transactionCode?: string }[]): string {
+  const currentYear = new Date().getFullYear();
+  let maxSeq = 100;
+  const regex = new RegExp(`^MAIS-EXP-${currentYear}-(\\d+)$`);
+  for (const exp of existingExpenses) {
+    if (!exp.transactionCode) continue;
+    const match = exp.transactionCode.match(regex);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > maxSeq) {
+        maxSeq = num;
+      }
+    }
+  }
+  return `MAIS-EXP-${currentYear}-${maxSeq + 1}`;
+}
+
+/**
+ * Generates a monotonic Staff User ID that never collides after deletions (M3).
+ */
+export function generateStaffUserId(existingUsers: { id: string }[]): string {
+  let maxSeq = 0;
+  for (const u of existingUsers) {
+    const match = u.id.match(/^USR-(\d+)$/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > maxSeq) {
+        maxSeq = num;
+      }
+    }
+  }
+  const next = maxSeq + 1;
+  return `USR-${next.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Generates a monotonic Supplier ID that never collides after deletions (M3).
+ */
+export function generateSupplierId(existingSuppliers: { id: string }[]): string {
+  let maxSeq = 0;
+  for (const s of existingSuppliers) {
+    const match = s.id.match(/^SUP-(\d+)$/i);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (!isNaN(num) && num > maxSeq) {
+        maxSeq = num;
+      }
+    }
+  }
+  return `SUP-${maxSeq + 1}`;
 }

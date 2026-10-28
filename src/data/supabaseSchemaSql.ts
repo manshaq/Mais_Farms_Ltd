@@ -513,26 +513,26 @@ ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE attachments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE backup_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE backup_runs ENABLE ROW LEVEL SECURITY;
--- Backend Application Access Policies (Node/Express backend enforces strict RBAC & business rules)
+-- Backend Application Access Policies (Scoped strictly TO service_role so public REST/anon access is blocked)
 CREATE POLICY "Allow backend access to animals" ON animals
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Allow backend access to animal_identifiers" ON animal_identifiers
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Allow backend access to users" ON users
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Allow backend access to animal_events" ON animal_events
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Allow backend access to attachments" ON attachments
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Allow backend access to expenses" ON expenses
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "Allow backend access to audit_logs" ON audit_logs
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 `;
 

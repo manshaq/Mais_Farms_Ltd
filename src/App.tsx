@@ -185,7 +185,7 @@ export default function App() {
 
   const fetchBackendState = useCallback(async () => {
     try {
-      const token = authToken || currentUserId;
+      const token = authToken || undefined;
       const data = await maisApiClient.getState(token);
       if (data.db) {
         setDb(data.db);
@@ -205,7 +205,7 @@ export default function App() {
         message: err.message || 'Unable to connect to server.',
       });
     }
-  }, [authToken, currentUserId]);
+  }, [authToken]);
 
   useEffect(() => {
     fetchBackendState();
@@ -216,7 +216,9 @@ export default function App() {
     token: string;
     authMode: 'supabase' | 'local_rbac';
   }) => {
-    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    // Rely on HttpOnly cookie for session token transport; do not store token in sessionStorage (H6)
+    const safeSession = { user: session.user, authMode: session.authMode };
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(safeSession));
     setAuthToken(session.token);
     setCurrentUserId(session.user.id);
     setIsAuthenticated(true);

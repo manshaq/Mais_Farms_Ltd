@@ -10,7 +10,13 @@ import {
   CalvingEvent,
   WeightRecord,
 } from '../../src/types/mais.ts';
-import { appendAnimalEvent, appendAudit, db, saveDatabase } from '../db/store.ts';
+import {
+  appendAnimalEvent,
+  appendAudit,
+  db,
+  generateExpenseTransactionCode,
+  saveDatabase,
+} from '../db/store.ts';
 import { insertAnimal, insertWeightRecord } from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
@@ -130,7 +136,7 @@ breedingRouter.post(
       const expId = `EXP-${Date.now()}`;
       db.expenses.unshift({
         id: expId,
-        transactionCode: `MAIS-EXP-2026-${db.expenses.length + 101}`,
+        transactionCode: generateExpenseTransactionCode(db.expenses),
         expenseDate: inseminationDate,
         amountNgn: cost,
         category: 'Breeding & AI',

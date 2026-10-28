@@ -15,7 +15,14 @@ import {
   Payment,
   WeightRecord,
 } from '../../src/types/mais.ts';
-import { appendAnimalEvent, appendAudit, db, saveDatabase, supabaseClient } from '../db/store.ts';
+import {
+  appendAnimalEvent,
+  appendAudit,
+  db,
+  generateExpenseTransactionCode,
+  saveDatabase,
+  supabaseClient,
+} from '../db/store.ts';
 import {
   insertAnimal,
   updateAnimal,
@@ -374,7 +381,7 @@ animalsRouter.post(
       const expId = `EXP-${Date.now()}`;
       const exp: Expense = {
         id: expId,
-        transactionCode: `MAIS-EXP-2026-${db.expenses.length + 101}`,
+        transactionCode: generateExpenseTransactionCode(db.expenses),
         expenseDate: regDate,
         amountNgn: parsedPrice,
         category: 'Animal Purchase',

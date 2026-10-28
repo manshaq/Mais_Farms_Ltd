@@ -1,5 +1,5 @@
-import { Router, Request, Response } from 'express';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { Router, Request, Response, NextFunction } from 'express';
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import {
   clearLoginAttempts,
   evaluateLoginRateLimit,
@@ -8,30 +8,50 @@ import {
   recordFailedLoginAttempt,
 } from '../../src/domain/farmRules.ts';
 import { StaffUser } from '../../src/types/mais.ts';
-import { appendAudit, db, saveDatabase, supabaseClient, supabaseUrl } from '../db/store.ts';
+import {
+  appendAudit,
+  db,
+  saveDatabase,
+  supabaseAuthClient,
+  supabaseClient,
+  supabaseUrl,
+} from '../db/store.ts';
 import { softDeleteUser } from '../db/supabaseService.ts';
 import {
   activeSessions,
+  cacheSupabaseSession,
+  registerLocalSession,
   requirePermission,
   resolveAndSyncSupabaseUser,
+  revokeSession,
   StaffRequest,
 } from '../middleware/auth.ts';
 import { validateRequiredString } from '../validation/validators.ts';
 
 export const authRouter = Router();
 
-// Per-IP rate limiter: 100 requests per 15 minutes per IP (zero external dependency)
+// Per-IP rate limiter for sensitive authentication endpoints (login, password reset)
+// Bound strictly to req.ip (trusting Express proxy configuration)
 interface IpWindow {
   count: number;
   resetAt: number;
 }
-const ipLimitStore = new Map<string, IpWindow>();
+export const ipLimitStore = new Map<string, IpWindow>();
 
-authRouter.use((req, res, next) => {
-  const ip = String(req.headers['x-forwarded-for'] || req.ip || 'local').split(',')[0].trim();
+export function pruneRateLimitStores(): void {
+  const now = Date.now();
+  for (const [ip, entry] of ipLimitStore.entries()) {
+    if (entry.resetAt <= now) {
+      ipLimitStore.delete(ip);
+    }
+  }
+}
+
+export function loginRateLimiter(req: Request, res: Response, next: NextFunction) {
+  const ip = req.ip || 'local';
   const now = Date.now();
   const windowMs = 15 * 60 * 1000;
-  const maxRequests = 100;
+  const maxRequests = 25; // 25 attempts per 15 min per IP
 
   let entry = ipLimitStore.get(ip);
   if (!entry || now > entry.resetAt) {
@@ -42,27 +62,48 @@ authRouter.use((req, res, next) => {
     if (entry.count > maxRequests) {
       const retryAfterSeconds = Math.ceil((entry.resetAt - now) / 1000);
       res.setHeader('Retry-After', String(retryAfterSeconds));
-      res.status(429).json({ error: 'Too many requests from this IP, please try again later.' });
+      res.status(429).json({ error: 'Too many login attempts from this IP, please try again later.' });
       return;
     }
   }
   next();
-});
+}
 
 export const loginAttemptStore = new Map<string, LoginAttemptRecord>();
 
+/**
+ * Modern salted scrypt password hashing (H2).
+ * Stores format: scrypt$<saltHex>$<derivedKeyHex>
+ */
 export function hashPassword(plain: string): string {
-  return createHash('sha256').update(plain).digest('hex');
+  const salt = randomBytes(16).toString('hex');
+  const derivedKey = scryptSync(plain, salt, 64);
+  return `scrypt$${salt}$${derivedKey.toString('hex')}`;
 }
 
+/**
+ * Timing-safe password verification supporting salted scrypt, legacy SHA-256 hex, and plaintext.
+ */
 export function verifyPassword(plain: string, stored: string): boolean {
-  // Support both legacy plaintext (length !== 64) and SHA-256 hex (length === 64)
-  const candidate = Buffer.from(hashPassword(plain), 'hex');
-  const storedHash = stored.length === 64
-    ? Buffer.from(stored, 'hex')
-    : Buffer.from(hashPassword(stored), 'hex');
-  if (candidate.length !== storedHash.length) return false;
-  return timingSafeEqual(candidate, storedHash);
+  if (!stored) return false;
+  if (stored.startsWith('scrypt$')) {
+    const parts = stored.split('$');
+    if (parts.length !== 3) return false;
+    const [, salt, expectedHash] = parts;
+    const derivedKey = scryptSync(plain, salt, 64);
+    const candidateBuffer = Buffer.from(derivedKey.toString('hex'), 'hex');
+    const expectedBuffer = Buffer.from(expectedHash, 'hex');
+    if (candidateBuffer.length !== expectedBuffer.length) return false;
+    return timingSafeEqual(candidateBuffer, expectedBuffer);
+  }
+  if (stored.length === 64) {
+    const candidate = createHash('sha256').update(plain).digest('hex');
+    const candidateBuffer = Buffer.from(candidate, 'hex');
+    const storedBuffer = Buffer.from(stored, 'hex');
+    if (candidateBuffer.length !== storedBuffer.length) return false;
+    return timingSafeEqual(candidateBuffer, storedBuffer);
+  }
+  return plain === stored;
 }
 
 export function sanitizeUser(u: StaffUser) {
@@ -75,11 +116,11 @@ export function sanitizeUser(u: StaffUser) {
 
 /**
  * POST /api/auth/login
- * Authenticates a user via Supabase Auth (signInWithPassword + public.users role lookup)
+ * Authenticates a user via Supabase Auth (signInWithPassword on isolated auth client)
  * or verifies local credentials when SUPABASE_URL is not configured.
  * Enforces brute-force rate limiting (max 5 failed attempts per 15-minute window).
  */
-authRouter.post('/auth/login', async (req: Request, res: Response) => {
+authRouter.post('/auth/login', loginRateLimiter, async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
   const emailCheck = validateRequiredString(email, 'Email', 3);
@@ -91,7 +132,7 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
 
   const normalizedEmail = String(email).trim().toLowerCase();
   const rawPassword = String(password);
-  const clientIp = String(req.headers['x-forwarded-for'] || req.ip || 'local').split(',')[0].trim();
+  const clientIp = req.ip || 'local';
   const rateLimitKey = `${clientIp}:${normalizedEmail}`;
 
   const rateCheck = evaluateLoginRateLimit(loginAttemptStore, rateLimitKey);
@@ -141,10 +182,10 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
     });
   };
 
-  // 1. Authenticate with Supabase Auth when configured
-  if (supabaseClient) {
+  // 1. Authenticate with Supabase Auth via dedicated auth client (H4: does not overwrite service_role client)
+  if (supabaseAuthClient) {
     try {
-      const { data, error } = await supabaseClient.auth.signInWithPassword({
+      const { data, error } = await supabaseAuthClient.auth.signInWithPassword({
         email: normalizedEmail,
         password: rawPassword,
       });
@@ -159,7 +200,7 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
         }
         clearLoginAttempts(loginAttemptStore, rateLimitKey);
         const token = data.session.access_token;
-        activeSessions.set(token, staffUser.id);
+        cacheSupabaseSession(token, staffUser.id);
 
         appendAudit(
           staffUser,
@@ -186,13 +227,16 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
         });
         return;
       } else if (error) {
-        // Auto-bootstrap default Admin into Supabase Auth if INITIAL_ADMIN_PASSWORD matches
+        // Auto-bootstrap default Admin into Supabase Auth if INITIAL_ADMIN_PASSWORD matches (H7)
+        const initAdminEmail = (process.env.INITIAL_ADMIN_EMAIL || 'belloaliyu808@gmail.com').trim().toLowerCase();
+        const initAdminName = (process.env.INITIAL_ADMIN_NAME || 'Bello Aliyu').trim();
         const initAdminPass = process.env.INITIAL_ADMIN_PASSWORD?.trim();
+
         if (
-          normalizedEmail === 'belloaliyu808@gmail.com' &&
+          normalizedEmail === initAdminEmail &&
           initAdminPass &&
           rawPassword === initAdminPass &&
-          supabaseClient.auth?.admin
+          supabaseClient?.auth?.admin
         ) {
           try {
             await supabaseClient.auth.admin.createUser({
@@ -201,13 +245,13 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
               email_confirm: true,
               user_metadata: {
                 role: 'Admin',
-                full_name: 'Bello Aliyu',
+                full_name: initAdminName,
                 title: 'Administrator',
                 staff_id: 'USR-01',
                 can_approve_expenses: true,
               },
             });
-            const retryRes = await supabaseClient.auth.signInWithPassword({
+            const retryRes = await supabaseAuthClient.auth.signInWithPassword({
               email: normalizedEmail,
               password: rawPassword,
             });
@@ -215,7 +259,7 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
               const staffUser = await resolveAndSyncSupabaseUser(retryRes.data.user);
               clearLoginAttempts(loginAttemptStore, rateLimitKey);
               const token = retryRes.data.session.access_token;
-              activeSessions.set(token, staffUser.id);
+              cacheSupabaseSession(token, staffUser.id);
               appendAudit(
                 staffUser,
                 'LOGIN',
@@ -265,14 +309,14 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
     return;
   }
 
-  // Timing-safe SHA-256 comparison. Transparently upgrades legacy plaintext hashes on first login.
+  // Timing-safe password verification
   if (!verifyPassword(rawPassword, localUser.password)) {
     handleFailedAttempt();
     return;
   }
 
-  // Upgrade plaintext password to SHA-256 hash transparently on first successful login
-  if (localUser.password.length !== 64) {
+  // Transparently upgrade legacy SHA-256 or plaintext password to salted scrypt (H2)
+  if (!localUser.password.startsWith('scrypt$')) {
     localUser.password = hashPassword(rawPassword);
   }
 
@@ -285,8 +329,10 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
 
   clearLoginAttempts(loginAttemptStore, rateLimitKey);
   localUser.lastActive = new Date().toISOString().slice(0, 16).replace('T', ' ');
-  const sessionToken = `mais_sess_${localUser.id}_${Date.now()}`;
-  activeSessions.set(sessionToken, localUser.id);
+
+  // Unpredictable 256-bit cryptographically secure session token (H3)
+  const sessionToken = `mais_sess_${randomBytes(32).toString('hex')}`;
+  registerLocalSession(sessionToken, localUser.id);
 
   appendAudit(
     localUser,
@@ -297,6 +343,14 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
     `${localUser.fullName} signed in.`
   );
   saveDatabase(db);
+
+  // Set HttpOnly cookie
+  res.cookie('auth_token', sessionToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
 
   res.json({
     token: sessionToken,
@@ -315,8 +369,8 @@ authRouter.post('/auth/signup', (_req: Request, res: Response) => {
   });
 });
 
-// Password reset endpoint using Supabase Auth
-authRouter.post('/auth/password-reset', async (req: Request, res: Response) => {
+// Password reset endpoint using Supabase Auth (guarded by loginRateLimiter)
+authRouter.post('/auth/password-reset', loginRateLimiter, async (req: Request, res: Response) => {
   const { email } = req.body;
   const emailCheck = validateRequiredString(email, 'Email', 3);
   if (!emailCheck.valid) {
@@ -324,12 +378,12 @@ authRouter.post('/auth/password-reset', async (req: Request, res: Response) => {
     return;
   }
   const normalizedEmail = String(email).trim().toLowerCase();
-  if (!supabaseClient) {
+  if (!supabaseAuthClient) {
     res.status(503).json({ error: 'Password reset not available without Supabase configured.' });
     return;
   }
   try {
-    const { error } = await supabaseClient.auth.resetPasswordForEmail(normalizedEmail);
+    const { error } = await supabaseAuthClient.auth.resetPasswordForEmail(normalizedEmail);
     if (error) {
       res.status(400).json({ error: error.message });
       return;
@@ -360,14 +414,13 @@ authRouter.get('/auth/me', (req: StaffRequest, res: Response) => {
  * POST /api/auth/logout
  */
 authRouter.post('/auth/logout', async (req: StaffRequest, res: Response) => {
-  // Clear session map and cookie
   if (req.authToken) {
-    activeSessions.delete(req.authToken);
+    revokeSession(req.authToken);
   }
   res.clearCookie('auth_token');
-  if (supabaseClient) {
+  if (supabaseAuthClient) {
     try {
-      await supabaseClient.auth.signOut();
+      await supabaseAuthClient.auth.signOut();
     } catch {
       // Ignore signout error
     }
@@ -407,8 +460,8 @@ authRouter.delete(
     targetUser.deleted = true;
 
     // Revoke all active in-memory sessions for target user
-    for (const [token, uid] of activeSessions.entries()) {
-      if (uid === targetUser.id) {
+    for (const [token, session] of activeSessions.entries()) {
+      if (session.userId === targetUser.id) {
         activeSessions.delete(token);
       }
     }

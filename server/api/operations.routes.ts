@@ -9,6 +9,7 @@ import { BackupTier, FarmTask, StaffRole, StaffUser } from '../../src/types/mais
 import {
   appendAudit,
   db,
+  generateStaffUserId,
   restoreDatabaseFromSnapshot,
   saveDatabase,
   supabaseClient,
@@ -181,7 +182,7 @@ operationsRouter.post(
     const resolvedTitle = String(title || validRole).trim();
     const canApprove =
       validRole === 'Admin' ? true : validRole === 'Farm Manager' ? Boolean(canApproveExpenses) : false;
-    const newId = `USR-0${db.users.length + 1}`;
+    const newId = generateStaffUserId(db.users);
     let supabaseUserId: string | undefined;
 
     if (supabaseClient) {
@@ -380,8 +381,8 @@ operationsRouter.delete(
     targetUser.deleted = true;
 
     // Invalidate active session tokens for the target user
-    for (const [token, uid] of activeSessions.entries()) {
-      if (uid === targetUser.id) {
+    for (const [token, session] of activeSessions.entries()) {
+      if (session.userId === targetUser.id) {
         activeSessions.delete(token);
       }
     }

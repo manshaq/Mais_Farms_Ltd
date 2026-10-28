@@ -375,15 +375,15 @@ DROP POLICY IF EXISTS "Read permitted staff" ON public.animals;
 DROP POLICY IF EXISTS "Write operational staff" ON public.animals;
 DROP POLICY IF EXISTS "Allow backend access to animals" ON public.animals;
 CREATE POLICY "Allow backend access to animals" ON public.animals
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Allow backend access to users" ON public.users;
 CREATE POLICY "Allow backend access to users" ON public.users
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Read audit admin only" ON public.audit_logs;
 DROP POLICY IF EXISTS "Allow backend access to audit_logs" ON public.audit_logs;
 CREATE POLICY "Allow backend access to audit_logs" ON public.audit_logs
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 

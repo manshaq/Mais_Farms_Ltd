@@ -4,7 +4,14 @@ import {
   canPerformAction,
 } from '../../src/domain/farmRules.ts';
 import { Expense, Payment } from '../../src/types/mais.ts';
-import { appendAnimalEvent, appendAudit, db, saveDatabase } from '../db/store.ts';
+import {
+  appendAnimalEvent,
+  appendAudit,
+  db,
+  generateExpenseTransactionCode,
+  generateSupplierId,
+  saveDatabase,
+} from '../db/store.ts';
 import { insertExpense, insertPayment } from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
@@ -121,7 +128,7 @@ expensesRouter.post(
     );
     if (!resolvedSupplier && cleanSupplierName) {
       resolvedSupplier = {
-        id: `SUP-${String(db.suppliers.length + 1).padStart(2, '0')}`,
+        id: generateSupplierId(db.suppliers),
         name: cleanSupplierName,
         category: String(category || 'General Vendor'),
         phone: '',
@@ -134,7 +141,7 @@ expensesRouter.post(
 
     const newExp: Expense = {
       id: expId,
-      transactionCode: `MAIS-EXP-2026-${db.expenses.length + 101}`,
+      transactionCode: generateExpenseTransactionCode(db.expenses),
       expenseDate: dateStr,
       amountNgn: amt,
       category,

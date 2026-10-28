@@ -31,7 +31,7 @@ DROP POLICY IF EXISTS "Read attachments permitted staff" ON public.attachments;
 DROP POLICY IF EXISTS "Write attachments operational staff" ON public.attachments;
 DROP POLICY IF EXISTS "Allow backend access to attachments" ON public.attachments;
 CREATE POLICY "Allow backend access to attachments" ON public.attachments
-  FOR ALL USING (true) WITH CHECK (true);
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- 2. Supabase Storage Private Buckets Setup (animal-photos and receipt-documents)
 DO $$

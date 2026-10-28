@@ -472,3 +472,171 @@ export async function syncDatabaseToSupabase(state: MaisDatabaseState): Promise<
     },
   };
 }
+
+export function mapDbToAnimal(row: Record<string, any>): Animal {
+  return {
+    id: row.id,
+    currentTag: row.current_tag,
+    name: row.name,
+    type: row.type,
+    sex: row.sex,
+    breed: row.breed,
+    dateOfBirth: row.date_of_birth,
+    acquisitionType: row.acquisition_type,
+    sourceDetails: row.source_details || undefined,
+    acquisitionDate: row.acquisition_date,
+    purchasePrice: row.purchase_price !== null && row.purchase_price !== undefined ? Number(row.purchase_price) : null,
+    damTag: row.dam_tag || undefined,
+    damId: row.dam_id || undefined,
+    sireId: row.sire_id || undefined,
+    herdGroup: row.herd_group,
+    location: row.location,
+    identifyingCharacteristics: row.identifying_characteristics || undefined,
+    status: row.status,
+    statusChangedAt: row.status_changed_at || undefined,
+    statusReason: row.status_reason || undefined,
+    notes: row.notes || undefined,
+    registeredBy: row.registered_by,
+    registeredAt: row.registered_at,
+  };
+}
+
+export function mapDbToIdentifier(row: Record<string, any>): AnimalIdentifier {
+  return {
+    id: row.id,
+    animalId: row.animal_id,
+    tagNumber: row.tag_number,
+    normalizedTag: row.normalized_tag,
+    isCurrent: Boolean(row.is_current),
+    assignedAt: row.assigned_at,
+    retiredAt: row.retired_at || undefined,
+    retiredReason: row.retired_reason || undefined,
+    assignedBy: row.assigned_by,
+  };
+}
+
+export function mapDbToUser(row: Record<string, any>): StaffUser {
+  return {
+    id: row.id,
+    supabaseUserId: row.supabase_user_id || undefined,
+    fullName: row.full_name,
+    email: row.email,
+    role: row.role,
+    title: row.title || 'Livestock Staff',
+    canApproveExpenses: Boolean(row.can_approve_expenses),
+    status: row.status || 'Active',
+    lastActive: row.last_active || new Date().toISOString(),
+    deleted: Boolean(row.deleted),
+  };
+}
+
+export function mapDbToExpense(row: Record<string, any>): Expense {
+  return {
+    id: row.id,
+    transactionCode: row.transaction_code,
+    expenseDate: row.expense_date,
+    amountNgn: Number(row.amount_ngn),
+    category: row.category,
+    description: row.description,
+    supplierId: row.supplier_id || undefined,
+    supplierName: row.supplier_name || undefined,
+    paymentStatus: row.payment_status,
+    paymentMethod: row.payment_method,
+    invoiceNumber: row.invoice_number || undefined,
+    linkedEntityType: row.linked_entity_type || undefined,
+    linkedEntityId: row.linked_entity_id || undefined,
+    linkedAnimalId: row.linked_animal_id || undefined,
+    approvalStatus: row.approval_status,
+    enteredBy: row.entered_by,
+    approvedBy: row.approved_by || undefined,
+    isReversed: Boolean(row.is_reversed),
+    reversalReason: row.reversal_reason || undefined,
+  };
+}
+
+export function mapDbToPayment(row: Record<string, any>): Payment {
+  return {
+    id: row.id,
+    expenseId: row.expense_id,
+    paymentDate: row.payment_date,
+    amountNgn: Number(row.amount_ngn),
+    paymentMethod: row.payment_method,
+    referenceNumber: row.reference_number || undefined,
+    recordedBy: row.recorded_by,
+    notes: row.notes || undefined,
+  };
+}
+
+/**
+ * Hydrates the in-memory store from Supabase PostgreSQL tables (C3).
+ * Solves Vercel serverless cold-start data persistence by making PostgreSQL
+ * the single source of truth.
+ */
+export async function hydrateDatabaseFromSupabase(targetDb: MaisDatabaseState): Promise<boolean> {
+  if (!supabaseClient) return false;
+
+  try {
+    const [
+      usersRes,
+      animalsRes,
+      identsRes,
+      expensesRes,
+      paymentsRes,
+      suppliersRes,
+      productsRes,
+    ] = await Promise.all([
+      supabaseClient.from('users').select('*'),
+      supabaseClient.from('animals').select('*'),
+      supabaseClient.from('animal_identifiers').select('*'),
+      supabaseClient.from('expenses').select('*'),
+      supabaseClient.from('payments').select('*'),
+      supabaseClient.from('suppliers').select('*'),
+      supabaseClient.from('feed_products').select('*'),
+    ]);
+
+    if (usersRes.data && usersRes.data.length > 0) {
+      targetDb.users = usersRes.data.map(mapDbToUser);
+    }
+    if (animalsRes.data && animalsRes.data.length > 0) {
+      targetDb.animals = animalsRes.data.map(mapDbToAnimal);
+    }
+    if (identsRes.data && identsRes.data.length > 0) {
+      targetDb.animalIdentifiers = identsRes.data.map(mapDbToIdentifier);
+    }
+    if (expensesRes.data && expensesRes.data.length > 0) {
+      targetDb.expenses = expensesRes.data.map(mapDbToExpense);
+    }
+    if (paymentsRes.data && paymentsRes.data.length > 0) {
+      targetDb.payments = paymentsRes.data.map(mapDbToPayment);
+    }
+    if (suppliersRes.data && suppliersRes.data.length > 0) {
+      targetDb.suppliers = suppliersRes.data.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        category: s.category,
+        phone: s.phone || '',
+        email: s.email || '',
+        address: s.address || '',
+        bankDetails: s.notes || '',
+      }));
+    }
+    if (productsRes.data && productsRes.data.length > 0) {
+      targetDb.feedProducts = productsRes.data.map((p: any) => ({
+        id: p.id,
+        name: p.name,
+        category: p.category,
+        unit: p.unit,
+        openingStock: Number(p.opening_stock),
+        reorderLevel: Number(p.reorder_level),
+        standardUnitCostNgn: Number(p.standard_unit_cost_ngn),
+        storageLocation: p.storage_location,
+      }));
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('Supabase hydration warning:', err);
+    return false;
+  }
+}
+

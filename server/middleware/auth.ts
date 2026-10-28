@@ -1,17 +1,68 @@
 import { Request, Response, NextFunction } from 'express';
 import { canPerformAction, PermissionAction } from '../../src/domain/farmRules.ts';
 import { StaffRole, StaffUser } from '../../src/types/mais.ts';
-import { db, saveDatabase, supabaseClient } from '../db/store.ts';
+import { db, generateStaffUserId, saveDatabase, supabaseClient } from '../db/store.ts';
 
 export interface StaffRequest extends Request {
   staffUser?: StaffUser;
   authToken?: string;
 }
 
+export interface SessionRecord {
+  userId: string;
+  expiresAt: number;
+  createdAt: number;
+  isSupabaseToken?: boolean;
+}
+
 /**
- * Active session token store mapping Bearer token -> StaffUser.id
+ * Active session token store mapping token -> SessionRecord with TTL
  */
-export const activeSessions = new Map<string, string>();
+export const activeSessions = new Map<string, SessionRecord>();
+
+/**
+ * Stores a local session token with 7-day TTL.
+ */
+export function registerLocalSession(token: string, userId: string, ttlMs = 7 * 24 * 60 * 60 * 1000): void {
+  activeSessions.set(token, {
+    userId,
+    expiresAt: Date.now() + ttlMs,
+    createdAt: Date.now(),
+    isSupabaseToken: false,
+  });
+}
+
+/**
+ * Caches a validated Supabase access token with a 5-minute TTL to re-verify against revocation.
+ */
+export function cacheSupabaseSession(token: string, userId: string): void {
+  const ttlMs = 5 * 60 * 1000; // 5 minutes TTL
+  activeSessions.set(token, {
+    userId,
+    expiresAt: Date.now() + ttlMs,
+    createdAt: Date.now(),
+    isSupabaseToken: true,
+  });
+}
+
+/**
+ * Revokes an active session token immediately upon logout or account deactivation.
+ */
+export function revokeSession(token: string): void {
+  activeSessions.delete(token);
+}
+
+/**
+ * Periodically prunes expired session tokens from memory.
+ */
+export function pruneExpiredSessions(): void {
+  const now = Date.now();
+  for (const [token, record] of activeSessions.entries()) {
+    if (record.expiresAt <= now) {
+      activeSessions.delete(token);
+    }
+  }
+}
 
 export function normalizeRole(rawRole: unknown): StaffRole {
   const str = String(rawRole || '').trim();
@@ -87,7 +138,7 @@ export async function resolveAndSyncSupabaseUser(supaUser: {
 
   if (!localUser) {
     localUser = {
-      id: dbRoleRow?.id || `USR-0${db.users.length + 1}`,
+      id: dbRoleRow?.id || generateStaffUserId(db.users),
       supabaseUserId: supaUser.id,
       fullName:
         dbRoleRow?.full_name ||
@@ -121,7 +172,8 @@ export async function resolveAndSyncSupabaseUser(supaUser: {
 }
 
 /**
- * Attaches the authenticated staff user based on Supabase JWT, session token, or x-staff-user-id.
+ * Attaches the authenticated staff user based on Supabase JWT or cryptographically validated session token.
+ * Direct user ID bypass (e.g. Bearer USR-01) has been completely removed.
  */
 export async function attachStaffUser(
   req: StaffRequest,
@@ -145,41 +197,38 @@ export async function attachStaffUser(
     if (bearerToken) {
       req.authToken = bearerToken;
 
-      // 1. Check active session map first
-      const mappedUserId = activeSessions.get(bearerToken);
-      // 1. Check in-memory active session token
-      if (mappedUserId) {
-        const sessionUser = db.users.find((u) => u.id === mappedUserId);
-        if (sessionUser && sessionUser.status === 'Active' && !sessionUser.deleted) {
-          req.staffUser = sessionUser;
-          next();
-          return;
-        }
-      }
-
-      // 2. Check if bearerToken is a direct StaffUser ID (e.g. USR-01)
-      // Only allowed in local dev mode (no Supabase client configured).
-      // In production with Supabase, all requests must carry a valid Supabase JWT.
-      if (!supabaseClient) {
-        const directUser = db.users.find((u) => u.id === bearerToken);
-        if (directUser && directUser.status === 'Active' && !directUser.deleted) {
-          req.staffUser = directUser;
-          next();
-          return;
-        }
-      }
-
-      // 3. If Supabase is configured, verify Supabase JWT and fetch role from Supabase
-      if (supabaseClient) {
-        const { data, error } = await supabaseClient.auth.getUser(bearerToken);
-        if (!error && data?.user) {
-          const syncedUser = await resolveAndSyncSupabaseUser(data.user);
-          if (syncedUser.status === 'Active' && !syncedUser.deleted) {
-            activeSessions.set(bearerToken, syncedUser.id);
-            req.staffUser = syncedUser;
+      // 1. Check in-memory active session token with TTL validation
+      const session = activeSessions.get(bearerToken);
+      if (session) {
+        if (session.expiresAt > Date.now()) {
+          const sessionUser = db.users.find((u) => u.id === session.userId);
+          if (sessionUser && sessionUser.status === 'Active' && !sessionUser.deleted) {
+            req.staffUser = sessionUser;
             next();
             return;
           }
+        } else {
+          // Token expired, purge from active sessions
+          activeSessions.delete(bearerToken);
+        }
+      }
+
+      // 2. If Supabase is configured and token is not an in-memory local session,
+      // verify Supabase JWT directly and cache with short TTL
+      if (supabaseClient) {
+        try {
+          const { data, error } = await supabaseClient.auth.getUser(bearerToken);
+          if (!error && data?.user) {
+            const syncedUser = await resolveAndSyncSupabaseUser(data.user);
+            if (syncedUser.status === 'Active' && !syncedUser.deleted) {
+              cacheSupabaseSession(bearerToken, syncedUser.id);
+              req.staffUser = syncedUser;
+              next();
+              return;
+            }
+          }
+        } catch {
+          // Verification failure: proceed without attaching staffUser
         }
       }
     }
