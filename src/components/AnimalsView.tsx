@@ -96,7 +96,7 @@ export const AnimalsView: React.FC<AnimalsViewProps> = ({
       'Location',
       'Origin',
       'Date of Birth',
-      'Acquisition Date',
+      'Date Acquired',
       'Latest Weight (kg)',
       'Latest Weight Date',
       'Purchase Cost (NGN)',

@@ -21,6 +21,10 @@ import {
   saveDatabase,
 } from '../db/store.ts';
 import {
+  deleteExpense,
+  deleteFeedPurchase,
+  deleteInventoryMovementsByReferenceId,
+  deletePaymentsByExpenseId,
   insertExpense,
   insertExpenseAllocation,
   insertFeedIssue,
@@ -30,7 +34,9 @@ import {
   insertPayment,
   insertSupplier,
   insertTask,
+  updateExpense,
   updateFeedProduct,
+  updateFeedPurchase,
 } from '../db/supabaseService.ts';
 import { paginateItems, requirePermission, StaffRequest } from '../middleware/auth.ts';
 import {
@@ -51,6 +57,7 @@ function resolveOrCreateFeedProduct(body: any): { product: FeedProduct | null; r
     productId,
     newProductName,
     newProductCategory,
+    newProductUnit,
     newProductReorderLevel,
     newProductStorageLocation,
     unitPriceNgn,
@@ -76,7 +83,7 @@ function resolveOrCreateFeedProduct(body: any): { product: FeedProduct | null; r
     id: `FD-${String(db.feedProducts.length + 1).padStart(2, '0')}-${Date.now().toString().slice(-3)}`,
     name: trimmedName,
     category: String(newProductCategory || 'Concentrate').trim(),
-    unit: 'kg',
+    unit: String(newProductUnit || 'kg').trim(),
     openingStock: 0,
     reorderLevel: Math.max(0, Number(newProductReorderLevel || 200)),
     standardUnitCostNgn: Math.max(1, Number(unitPriceNgn || 450)),
@@ -241,6 +248,7 @@ feedRouter.post(
       transportCostNgn,
       invoiceNumber,
       paymentStatus,
+      notes,
     } = req.body;
 
     const { product, ready: productReady } = resolveOrCreateFeedProduct(req.body);
@@ -316,11 +324,13 @@ feedRouter.post(
       batchNumber: String(batchNumber || `B-${Date.now().toString().slice(-4)}`).trim(),
       quantityOrdered: Number(quantityOrdered || qtyRec),
       quantityReceived: qtyRec,
+      unit: product.unit || 'kg',
       unitPriceNgn: unitPrice,
       transportCostNgn: transport,
       totalCostNgn,
       invoiceNumber: String(invoiceNumber || `INV-${Date.now().toString().slice(-5)}`).trim(),
       expenseId,
+      notes: String(notes || '').trim(),
       recordedBy: user.fullName,
     };
 
@@ -341,7 +351,7 @@ feedRouter.post(
       expenseDate: dateStr,
       amountNgn: totalCostNgn,
       category: 'Feed & Nutrition',
-      description: `Purchase of ${qtyRec} kg ${product.name} (Batch ${purchase.batchNumber})`,
+      description: `Purchase of ${qtyRec} ${purchase.unit} ${product.name} (Batch ${purchase.batchNumber})`,
       supplierId: purchase.supplierId,
       supplierName: purchase.supplierName,
       paymentStatus: paymentStatus || 'Paid',
@@ -396,7 +406,7 @@ feedRouter.post(
       'FeedPurchase',
       purchaseId,
       null,
-      `Received ${qtyRec} kg of ${product.name} for NGN ${totalCostNgn.toLocaleString()} (Invoice ${purchase.invoiceNumber}).`
+      `Received ${qtyRec} ${purchase.unit} of ${product.name} for NGN ${totalCostNgn.toLocaleString()} (Invoice ${purchase.invoiceNumber}).`
     );
 
     saveDatabase(db);
@@ -411,6 +421,165 @@ feedRouter.post(
         console.warn('⚠️ [MAIS DB] Supabase feed product update warning:', err?.message || err);
       });
     res.status(201).json({ purchase, expense: exp, product });
+  }
+);
+
+/**
+ * PUT /api/feed/purchases/:id & PUT /api/feed-purchases/:id
+ * Edits a previously recorded feed purchase. Recalculates the total price
+ * from quantity x price-per-unit + transport on the server (never trusts a
+ * client-sent total), and keeps the linked expense amount in sync.
+ */
+feedRouter.put(
+  ['/feed/purchases/:id', '/feed-purchases/:id'],
+  requirePermission('MANAGE_FEED'),
+  (req: StaffRequest, res: Response) => {
+    const user = req.staffUser!;
+    const purchase = db.feedPurchases.find((p) => p.id === req.params.id);
+    if (!purchase) {
+      res.status(404).json({ error: 'Feed purchase record not found.' });
+      return;
+    }
+
+    const {
+      purchaseDate,
+      batchNumber,
+      quantityReceived,
+      unitPriceNgn,
+      transportCostNgn,
+      supplierName,
+      invoiceNumber,
+      notes,
+    } = req.body;
+
+    if (quantityReceived !== undefined) {
+      const qtyCheck = validatePositiveNumber(quantityReceived, 'Quantity received');
+      if (!qtyCheck.valid) {
+        res.status(400).json({ error: qtyCheck.error });
+        return;
+      }
+    }
+    if (unitPriceNgn !== undefined) {
+      const priceCheck = validatePositiveNumber(unitPriceNgn, 'Price per unit');
+      if (!priceCheck.valid) {
+        res.status(400).json({ error: priceCheck.error });
+        return;
+      }
+    }
+    if (transportCostNgn !== undefined) {
+      const transportCheck = validateNonNegativeNumber(transportCostNgn, 'Transport cost');
+      if (!transportCheck.valid) {
+        res.status(400).json({ error: transportCheck.error });
+        return;
+      }
+    }
+
+    if (purchaseDate !== undefined) purchase.purchaseDate = String(purchaseDate).trim();
+    if (batchNumber !== undefined) purchase.batchNumber = String(batchNumber).trim();
+    if (quantityReceived !== undefined) purchase.quantityReceived = Number(quantityReceived);
+    if (unitPriceNgn !== undefined) purchase.unitPriceNgn = Number(unitPriceNgn);
+    if (transportCostNgn !== undefined) purchase.transportCostNgn = Number(transportCostNgn);
+    if (supplierName !== undefined) purchase.supplierName = String(supplierName).trim();
+    if (invoiceNumber !== undefined) purchase.invoiceNumber = String(invoiceNumber).trim();
+    if (notes !== undefined) purchase.notes = String(notes).trim();
+
+    // Total Price is always recalculated server-side from quantity x price-per-unit + transport.
+    purchase.totalCostNgn = Math.round(
+      purchase.quantityReceived * purchase.unitPriceNgn + purchase.transportCostNgn
+    );
+
+    // Keep the linked expense's amount/description in sync with the corrected purchase.
+    const linkedExpense = purchase.expenseId
+      ? db.expenses.find((e) => e.id === purchase.expenseId)
+      : null;
+    if (linkedExpense) {
+      linkedExpense.amountNgn = purchase.totalCostNgn;
+      linkedExpense.description = `Purchase of ${purchase.quantityReceived} ${purchase.unit} ${purchase.productName} (Batch ${purchase.batchNumber})`;
+      linkedExpense.supplierName = purchase.supplierName;
+      linkedExpense.invoiceNumber = purchase.invoiceNumber;
+      updateExpense(linkedExpense.id, {
+        amountNgn: linkedExpense.amountNgn,
+        description: linkedExpense.description,
+        supplierName: linkedExpense.supplierName,
+        invoiceNumber: linkedExpense.invoiceNumber,
+      }).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase expense update warning:', err?.message || err);
+      });
+    }
+
+    appendAudit(
+      user,
+      'UPDATE_FEED_PURCHASE',
+      'FeedPurchase',
+      purchase.id,
+      null,
+      `Updated feed purchase (Invoice ${purchase.invoiceNumber}): ${purchase.quantityReceived} ${purchase.unit} of ${purchase.productName} for NGN ${purchase.totalCostNgn.toLocaleString()}.`
+    );
+
+    saveDatabase(db);
+    updateFeedPurchase(purchase.id, purchase).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase feed purchase update warning:', err?.message || err);
+    });
+    res.json({ purchase, expense: linkedExpense });
+  }
+);
+
+/**
+ * DELETE /api/feed/purchases/:id & DELETE /api/feed-purchases/:id
+ * Removes a mis-entered feed purchase along with its receipt movement and
+ * linked expense/payments, so stock and financial totals stay consistent.
+ */
+feedRouter.delete(
+  ['/feed/purchases/:id', '/feed-purchases/:id'],
+  requirePermission('MANAGE_FEED'),
+  (req: StaffRequest, res: Response) => {
+    const user = req.staffUser!;
+    const purchase = db.feedPurchases.find((p) => p.id === req.params.id);
+    if (!purchase) {
+      res.status(404).json({ error: 'Feed purchase record not found.' });
+      return;
+    }
+
+    db.feedPurchases = db.feedPurchases.filter((p) => p.id !== purchase.id);
+    db.inventoryMovements = db.inventoryMovements.filter((m) => m.referenceId !== purchase.id);
+    if (purchase.expenseId) {
+      db.payments = db.payments.filter((p) => p.expenseId !== purchase.expenseId);
+      db.expenses = db.expenses.filter((e) => e.id !== purchase.expenseId);
+    }
+
+    appendAudit(
+      user,
+      'DELETE_FEED_PURCHASE',
+      'FeedPurchase',
+      purchase.id,
+      null,
+      `Deleted feed purchase (Invoice ${purchase.invoiceNumber}): ${purchase.quantityReceived} ${purchase.unit} of ${purchase.productName}.`
+    );
+
+    saveDatabase(db);
+    // Clean up related Supabase rows (payments, then expense, then the
+    // movement/purchase itself). None of these carry an FK back onto
+    // feed_purchases, so exact ordering only matters for payments->expense.
+    deleteInventoryMovementsByReferenceId(purchase.id).catch((err) => {
+      console.warn('⚠️ [MAIS DB] Supabase inventory movement delete warning:', err?.message || err);
+    });
+    const expenseId = purchase.expenseId;
+    const expenseCleanup = expenseId
+      ? deletePaymentsByExpenseId(expenseId)
+          .catch((err) => {
+            console.warn('⚠️ [MAIS DB] Supabase payment delete warning:', err?.message || err);
+          })
+          .then(() => deleteExpense(expenseId))
+          .catch((err) => {
+            console.warn('⚠️ [MAIS DB] Supabase expense delete warning:', err?.message || err);
+          })
+      : Promise.resolve();
+    expenseCleanup.finally(() => {
+      deleteFeedPurchase(purchase.id).catch((err) => {
+        console.warn('⚠️ [MAIS DB] Supabase feed purchase delete warning:', err?.message || err);
+      });
+    });
+    res.json({ deleted: true, purchaseId: purchase.id });
   }
 );
 
@@ -495,7 +664,7 @@ feedRouter.post(
       productId: product.id,
       productName: product.name,
       quantity: qty,
-      unit: 'kg',
+      unit: product.unit || 'kg',
       targetType: targetType || 'Group',
       targetAnimalId: targetType === 'Animal' ? targetAnimals[0].id : null,
       targetGroup: targetType === 'Group' ? targetGroup : null,

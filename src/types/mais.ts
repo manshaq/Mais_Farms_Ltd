@@ -200,11 +200,13 @@ export interface FeedPurchase {
   batchNumber: string;
   quantityOrdered: number;
   quantityReceived: number;
+  unit: string;
   unitPriceNgn: number;
   transportCostNgn: number;
   totalCostNgn: number;
   invoiceNumber: string;
   expenseId: string | null;
+  notes: string;
   recordedBy: string;
 }
 
@@ -256,6 +258,11 @@ export interface Expense {
   transactionCode: string;
   expenseDate: string;
   amountNgn: number;
+  // Optional quantity-based pricing (e.g. "5 Bags at NGN 12,000 each").
+  // Left null for fixed expenses that don't involve a measurable quantity.
+  quantity?: number | null;
+  unit?: string | null;
+  pricePerUnitNgn?: number | null;
   category: ExpenseCategory;
   description: string;
   supplierId: string | null;

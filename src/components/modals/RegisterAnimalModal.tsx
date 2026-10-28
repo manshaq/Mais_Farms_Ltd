@@ -40,6 +40,24 @@ export const RegisterAnimalModal: React.FC<RegisterAnimalModalProps> = ({
   const [characteristics, setCharacteristics] = useState('');
   const [initialWeightKg, setInitialWeightKg] = useState('');
 
+  const existingTypes = Array.from(
+    new Set(['Cow', 'Bull', 'Heifer', 'Calf', 'Steer', 'Yearling', ...db.animals.map((a) => a.type).filter(Boolean)])
+  );
+
+  const existingBreeds = Array.from(
+    new Set([
+      'Friesian-Bunaji Cross',
+      'Holstein Friesian',
+      'Sokoto Gudali',
+      'White Fulani (Bunaji)',
+      'Red Bororo',
+      'Brahman',
+      'Jersey',
+      'Girolando',
+      ...db.animals.map((a) => a.breed).filter(Boolean),
+    ])
+  );
+
   const existingGroups = Array.from(
     new Set([
       'Lactating Cows',
@@ -129,41 +147,60 @@ export const RegisterAnimalModal: React.FC<RegisterAnimalModalProps> = ({
           />
         </div>
 
-        <SelectWithCustom
-          label="Animal Type"
-          required
-          value={animalType}
-          onChange={(v) => setAnimalType(v)}
-          options={['Cow', 'Bull', 'Heifer', 'Calf', 'Steer', 'Yearling']}
-          placeholder="Type custom animal category..."
-        />
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1.5">
+            Animal Type <span className="text-emerald-700">*</span>
+          </label>
+          <input
+            type="text"
+            required
+            list="animal-type-suggestions"
+            value={animalType}
+            onChange={(e) => setAnimalType(e.target.value)}
+            placeholder="e.g. Cow, Bull, Heifer, Calf..."
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+          />
+          <datalist id="animal-type-suggestions">
+            {existingTypes.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+        </div>
 
-        <SelectWithCustom
-          label="Sex"
-          required
-          value={sex}
-          onChange={(v) => setSex(v)}
-          options={['Female', 'Male', 'Castrated / Steer']}
-          placeholder="Type sex / classification..."
-        />
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1.5">
+            Gender <span className="text-emerald-700">*</span>
+          </label>
+          <select
+            required
+            value={sex}
+            onChange={(e) => setSex(e.target.value)}
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white"
+          >
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+          </select>
+        </div>
 
-        <SelectWithCustom
-          label="Breed"
-          required
-          value={breed}
-          onChange={(v) => setBreed(v)}
-          options={[
-            'Friesian-Bunaji Cross',
-            'Holstein Friesian',
-            'Sokoto Gudali',
-            'White Fulani (Bunaji)',
-            'Red Bororo',
-            'Brahman',
-            'Jersey',
-            'Girolando',
-          ]}
-          placeholder="Type custom breed..."
-        />
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1.5">
+            Breed <span className="text-emerald-700">*</span>
+          </label>
+          <input
+            type="text"
+            required
+            list="breed-suggestions"
+            value={breed}
+            onChange={(e) => setBreed(e.target.value)}
+            placeholder="e.g. White Fulani, Sokoto Gudali, Friesian..."
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+          />
+          <datalist id="breed-suggestions">
+            {existingBreeds.map((b) => (
+              <option key={b} value={b} />
+            ))}
+          </datalist>
+        </div>
 
         <div>
           <label className="block font-semibold text-slate-700 mb-1.5">
@@ -189,7 +226,7 @@ export const RegisterAnimalModal: React.FC<RegisterAnimalModalProps> = ({
 
         <div>
           <label className="block font-semibold text-slate-700 mb-1.5">
-            Acquisition Date <span className="text-emerald-700">*</span>
+            Date Acquired <span className="text-emerald-700">*</span>
           </label>
           <input
             type="date"
@@ -263,23 +300,45 @@ export const RegisterAnimalModal: React.FC<RegisterAnimalModalProps> = ({
           />
         </div>
 
-        <SelectWithCustom
-          label="Herd Group"
-          required
-          value={herdGroup}
-          onChange={(v) => setHerdGroup(v)}
-          options={existingGroups}
-          placeholder="Type custom herd group..."
-        />
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1.5">
+            Herd Group <span className="text-emerald-700">*</span>
+          </label>
+          <input
+            type="text"
+            required
+            list="herd-group-suggestions"
+            value={herdGroup}
+            onChange={(e) => setHerdGroup(e.target.value)}
+            placeholder="e.g. Lactating Cows, Growing Heifers..."
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+          />
+          <datalist id="herd-group-suggestions">
+            {existingGroups.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
+        </div>
 
-        <SelectWithCustom
-          label="Location / Barn / Paddock"
-          required
-          value={location}
-          onChange={(v) => setLocation(v)}
-          options={existingLocations}
-          placeholder="Type custom barn or paddock..."
-        />
+        <div>
+          <label className="block font-semibold text-slate-700 mb-1.5">
+            Location / Barn / Paddock <span className="text-emerald-700">*</span>
+          </label>
+          <input
+            type="text"
+            required
+            list="location-suggestions"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="e.g. North Dairy Barn A, Pasture Zone 1..."
+            className="w-full px-3 py-2 border border-slate-300 rounded-lg"
+          />
+          <datalist id="location-suggestions">
+            {existingLocations.map((l) => (
+              <option key={l} value={l} />
+            ))}
+          </datalist>
+        </div>
 
         <div>
           <label className="block font-semibold text-slate-700 mb-1.5">

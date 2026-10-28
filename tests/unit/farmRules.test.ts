@@ -131,11 +131,13 @@ test('calculateFeedProductStock enforces Closing Stock = Opening Stock + Receipt
       batchNumber: 'B-101',
       quantityOrdered: 2000,
       quantityReceived: 2000,
+      unit: 'kg',
       unitPriceNgn: 420,
       transportCostNgn: 20000,
       totalCostNgn: 860000,
       invoiceNumber: 'INV-101',
       expenseId: 'EXP-1',
+      notes: '',
       recordedBy: 'Musa Ibrahim',
     },
   ];

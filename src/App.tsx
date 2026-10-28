@@ -602,6 +602,14 @@ export default function App() {
                 setSelectedAnimalId(animal.id);
                 setHistoricalTagMatched(null);
               }}
+              onEditFeedPurchase={async (purchaseId, payload) => {
+                await apiCall(`/api/feed/purchases/${purchaseId}`, 'PUT', payload);
+                setBanner({ type: 'success', message: 'Feed purchase updated.' });
+              }}
+              onDeleteFeedPurchase={async (purchaseId) => {
+                await apiCall(`/api/feed/purchases/${purchaseId}`, 'DELETE');
+                setBanner({ type: 'success', message: 'Feed purchase deleted.' });
+              }}
             />
           )}
 

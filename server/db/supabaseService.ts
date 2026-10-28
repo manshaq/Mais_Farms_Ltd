@@ -133,6 +133,9 @@ export function mapExpenseToDb(expense: Expense) {
     transaction_code: expense.transactionCode,
     expense_date: expense.expenseDate,
     amount_ngn: expense.amountNgn,
+    quantity: expense.quantity ?? null,
+    unit: expense.unit || null,
+    price_per_unit_ngn: expense.pricePerUnitNgn ?? null,
     category: expense.category,
     description: expense.description,
     supplier_id: expense.supplierId || null,
@@ -425,6 +428,13 @@ export function mapExpenseUpdatesToDb(updates: Partial<Expense>): Record<string,
   if (updates.approvedBy !== undefined) mapped.approved_by = updates.approvedBy;
   if (updates.isReversed !== undefined) mapped.is_reversed = updates.isReversed;
   if (updates.reversalReason !== undefined) mapped.reversal_reason = updates.reversalReason;
+  if (updates.amountNgn !== undefined) mapped.amount_ngn = updates.amountNgn;
+  if (updates.quantity !== undefined) mapped.quantity = updates.quantity;
+  if (updates.unit !== undefined) mapped.unit = updates.unit || null;
+  if (updates.pricePerUnitNgn !== undefined) mapped.price_per_unit_ngn = updates.pricePerUnitNgn;
+  if (updates.description !== undefined) mapped.description = updates.description;
+  if (updates.supplierName !== undefined) mapped.supplier_name = updates.supplierName;
+  if (updates.invoiceNumber !== undefined) mapped.invoice_number = updates.invoiceNumber || null;
   return mapped;
 }
 
@@ -863,6 +873,12 @@ export function mapDbToExpense(row: Record<string, any>): Expense {
     transactionCode: row.transaction_code,
     expenseDate: row.expense_date,
     amountNgn: Number(row.amount_ngn),
+    quantity: row.quantity !== null && row.quantity !== undefined ? Number(row.quantity) : null,
+    unit: row.unit || null,
+    pricePerUnitNgn:
+      row.price_per_unit_ngn !== null && row.price_per_unit_ngn !== undefined
+        ? Number(row.price_per_unit_ngn)
+        : null,
     category: row.category,
     description: row.description,
     supplierId: row.supplier_id || undefined,
@@ -1112,11 +1128,13 @@ export function mapFeedPurchaseToDb(p: FeedPurchase) {
     batch_number: p.batchNumber || null,
     quantity_ordered: p.quantityOrdered,
     quantity_received: p.quantityReceived,
+    unit: p.unit || 'kg',
     unit_price_ngn: p.unitPriceNgn,
     transport_cost_ngn: p.transportCostNgn,
     total_cost_ngn: p.totalCostNgn,
     invoice_number: p.invoiceNumber || null,
     expense_id: p.expenseId || null,
+    notes: p.notes || null,
     recorded_by: p.recordedBy,
   };
 }
@@ -1132,13 +1150,64 @@ export function mapDbToFeedPurchase(row: Record<string, any>): FeedPurchase {
     batchNumber: row.batch_number || '',
     quantityOrdered: Number(row.quantity_ordered),
     quantityReceived: Number(row.quantity_received),
+    unit: row.unit || 'kg',
     unitPriceNgn: Number(row.unit_price_ngn),
     transportCostNgn: Number(row.transport_cost_ngn) || 0,
     totalCostNgn: Number(row.total_cost_ngn),
     invoiceNumber: row.invoice_number || '',
     expenseId: row.expense_id || null,
+    notes: row.notes || '',
     recordedBy: row.recorded_by,
   };
+}
+
+export function mapFeedPurchaseUpdatesToDb(updates: Partial<FeedPurchase>): Record<string, unknown> {
+  const mapped: Record<string, unknown> = {};
+  if (updates.supplierId !== undefined) mapped.supplier_id = updates.supplierId || null;
+  if (updates.supplierName !== undefined) mapped.supplier_name = updates.supplierName;
+  if (updates.purchaseDate !== undefined) mapped.purchase_date = updates.purchaseDate;
+  if (updates.batchNumber !== undefined) mapped.batch_number = updates.batchNumber || null;
+  if (updates.quantityOrdered !== undefined) mapped.quantity_ordered = updates.quantityOrdered;
+  if (updates.quantityReceived !== undefined) mapped.quantity_received = updates.quantityReceived;
+  if (updates.unit !== undefined) mapped.unit = updates.unit;
+  if (updates.unitPriceNgn !== undefined) mapped.unit_price_ngn = updates.unitPriceNgn;
+  if (updates.transportCostNgn !== undefined) mapped.transport_cost_ngn = updates.transportCostNgn;
+  if (updates.totalCostNgn !== undefined) mapped.total_cost_ngn = updates.totalCostNgn;
+  if (updates.invoiceNumber !== undefined) mapped.invoice_number = updates.invoiceNumber || null;
+  if (updates.notes !== undefined) mapped.notes = updates.notes || null;
+  return mapped;
+}
+
+export async function updateFeedPurchase(id: string, updates: Partial<FeedPurchase>) {
+  return updateRowById('feed_purchases', id, mapFeedPurchaseUpdatesToDb(updates), 'updateFeedPurchase');
+}
+
+export async function deleteFeedPurchase(id: string) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('feed_purchases').delete().eq('id', id);
+  if (error) console.warn('Supabase deleteFeedPurchase warning:', error.message);
+  return true;
+}
+
+export async function deleteInventoryMovementsByReferenceId(referenceId: string) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('inventory_movements').delete().eq('reference_id', referenceId);
+  if (error) console.warn('Supabase deleteInventoryMovementsByReferenceId warning:', error.message);
+  return true;
+}
+
+export async function deleteExpense(id: string) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('expenses').delete().eq('id', id);
+  if (error) console.warn('Supabase deleteExpense warning:', error.message);
+  return true;
+}
+
+export async function deletePaymentsByExpenseId(expenseId: string) {
+  if (!supabaseClient) return null;
+  const { error } = await supabaseClient.from('payments').delete().eq('expense_id', expenseId);
+  if (error) console.warn('Supabase deletePaymentsByExpenseId warning:', error.message);
+  return true;
 }
 
 export function mapFeedIssueToDb(f: FeedIssue) {
